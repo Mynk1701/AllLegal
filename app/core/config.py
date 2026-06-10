@@ -18,12 +18,11 @@ class Settings(BaseSettings):
     # Database (PostgreSQL with Supabase)
     DATABASE_URL: str = "postgresql://postgres:password@localhost:5432/alllegal"
     
-    # OpenSearch Configuration
-    OPENSEARCH_HOST: str = "localhost"
-    OPENSEARCH_PORT: int = 9200
-    OPENSEARCH_SCHEME: str = "http"
-    OPENSEARCH_INDEX: str = "legal_cases"
-    OPENSEARCH_TIMEOUT: int = 20
+    # Meilisearch Configuration (replaced OpenSearch)
+    MEILISEARCH_HOST: str = "localhost"
+    MEILISEARCH_PORT: int = 7700
+    MEILISEARCH_MASTER_KEY: str = "your-master-key-change-in-production"
+    MEILISEARCH_INDEX: str = "legal_cases"
     
     # Redis Configuration
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -48,7 +47,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
-        extra = "ignore"  # Allow extra fields from .env (ignore them)
+        extra = "ignore"
 
 @lru_cache()
 def get_settings() -> Settings:

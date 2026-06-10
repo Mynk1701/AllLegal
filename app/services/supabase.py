@@ -160,7 +160,7 @@ class SupabaseService:
     def search_cases(self, query: str, limit: int = 10) -> List[Dict]:
         """
         Search cases by title or summary.
-        Note: Full-text search is in OpenSearch. This is basic DB search.
+        Note: Full-text search is in Meilisearch. This is basic DB search.
         
         Args:
             query: Search string

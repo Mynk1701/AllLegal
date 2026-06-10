@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
 # Create FastAPI app
 app = FastAPI(
     title="AllLegal - Legal Case Search API",
-    description="Search Indian legal cases with boolean queries using OpenSearch. Powered by Supabase.",
+    description="Search Indian legal cases with fast full-text search using Meilisearch. Powered by Supabase.",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",

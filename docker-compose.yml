@@ -33,37 +33,24 @@ services:
       timeout: 5s
       retries: 5
 
-  # OpenSearch for full-text case searching
-  opensearch:
-    image: opensearchproject/opensearch:latest
-    container_name: alllegal_opensearch
+  # Meilisearch for full-text case searching (faster and simpler than OpenSearch)
+  meilisearch:
+    image: getmeili/meilisearch:latest
+    container_name: alllegal_meilisearch
     ports:
-      - "9200:9200"
-      - "9600:9600"
+      - "7700:7700"
     environment:
-      - discovery.type=single-node
-      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
-      - DISABLE_SECURITY_PLUGIN=true
+      MEILI_MASTER_KEY: ${MEILISEARCH_MASTER_KEY}
+      MEILI_ENV: production
     volumes:
-      - opensearch_data:/usr/share/opensearch/data
+      - meilisearch_data:/meili_data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9200/"]
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # OpenSearch Dashboards for visualizing searches
-  opensearch-dashboards:
-    image: opensearchproject/opensearch-dashboards:latest
-    container_name: alllegal_dashboards
-    ports:
-      - "5601:5601"
-    environment:
-      OPENSEARCH_HOSTS: '["http://opensearch:9200"]'
-    depends_on:
-      - opensearch
-
 volumes:
   postgres_data:
   redis_data:
-  opensearch_data:
+  meilisearch_data:
