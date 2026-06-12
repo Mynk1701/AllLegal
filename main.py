@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
-from app.api.routes import search, auth
+from app.api.routes import search, auth, cases
 from app.core.config import settings
 
 # Configure logging
@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
 # Create FastAPI app
 app = FastAPI(
     title="AllLegal - Legal Case Search API",
-    description="Search Indian legal cases with fast full-text search using Meilisearch. Powered by Supabase.",
+    description="Search Indian legal cases via semantic kNN + hard filters over OpenSearch. Powered by Supabase.",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
@@ -47,6 +47,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(search.router, prefix="/api", tags=["search"])
+app.include_router(cases.router, prefix="/api", tags=["cases"])
 app.include_router(auth.router, prefix="/api", tags=["auth"])
 
 # Health check endpoint

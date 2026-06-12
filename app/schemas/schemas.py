@@ -1,62 +1,120 @@
 """
 Type-safe Pydantic schemas for API requests and responses.
-Provides automatic validation and documentation.
+
+Search is case-grouped: results are CASES, each carrying the top matching CHUNKS
+(the highlight payload for the PDF reader). OpenSearch ranks/filters; Supabase
+supplies case_name, bench, bbox/page_range, and the signed PDF URL.
 """
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 
-# ==================== Case Schemas ====================
 
-class CaseResponse(BaseModel):
-    """Schema for a single legal case in search results"""
-    case_id: str = Field(..., description="Unique case identifier")
-    title: str = Field(..., min_length=1, max_length=500, description="Case title")
-    court: str = Field(..., description="Court name (e.g., Supreme Court)")
-    year: int = Field(..., ge=1950, le=2100, description="Year of judgment")
-    judge: Optional[str] = Field(None, description="Judge name")
-    summary: Optional[str] = Field(None, description="Case summary")
-    case_number: Optional[str] = Field(None, description="Official case number")
-    relevance_score: float = Field(
-        default=1.0,
-        ge=0.0,
-        le=1.0,
-        description="Search relevance score (0-1)"
-    )
-    
-    class Config:
-        from_attributes = True
-        json_schema_extra = {
-            "example": {
-                "case_id": "case_001",
-                "title": "State of Karnataka v. Rishikesh",
-                "court": "Supreme Court of India",
-                "year": 2015,
-                "judge": "Justice R.K. Agarwal",
-                "relevance_score": 0.95,
-                "summary": "Constitutional validity of right to privacy",
-                "case_number": "Civil Appeal No. 5555"
-            }
-        }
+# ==================== Search: chunk + case ====================
+
+class MatchedChunk(BaseModel):
+    """A matching chunk within a case — drives the highlighted PDF view."""
+    chunk_id: str
+    chunk_type: Optional[str] = Field(None, description="Rhetorical role (Ratio, FinalDecision, ...)")
+    chunk_text: Optional[str] = None
+    chunk_sequence: Optional[int] = None
+    score: Optional[float] = Field(None, description="Semantic relevance (kNN); null for filter-only")
+    page_range: Optional[List[int]] = Field(None, description="[min_page, max_page] (Supabase)")
+    bbox: Optional[Any] = Field(None, description="List of per-block bounding boxes (Supabase)")
+
+
+class CaseResult(BaseModel):
+    """One case in the result list, with its top matching chunks."""
+    case_id: str
+    case_name: str = ""
+    citation: Optional[str] = None
+    court: Optional[str] = None
+    case_type: Optional[str] = None
+    verdict: Optional[str] = None
+    year: Optional[int] = None
+    date_decided: Optional[str] = None
+    bench: List[str] = Field(default_factory=list, description="Judge names (Supabase)")
+    bench_strength: Optional[int] = None
+    acts_cited: List[str] = Field(default_factory=list)
+    sections_cited: List[str] = Field(default_factory=list)
+    pdf_url: Optional[str] = Field(None, description="Signed Supabase Storage URL")
+    score: Optional[float] = Field(None, description="Best matched-chunk score")
+    matched_chunks: List[MatchedChunk] = Field(default_factory=list)
+
+
+# ==================== Facets ====================
+
+class FacetValue(BaseModel):
+    value: Any
+    count: int = Field(..., description="Distinct CASES (cardinality), not chunks")
+
+
+class Facets(BaseModel):
+    court: List[FacetValue] = Field(default_factory=list)
+    case_type: List[FacetValue] = Field(default_factory=list)
+    verdict: List[FacetValue] = Field(default_factory=list)
+    acts_cited: List[FacetValue] = Field(default_factory=list)
+    sections_cited: List[FacetValue] = Field(default_factory=list)
+    bench_strength: List[FacetValue] = Field(default_factory=list)
+    year_range: Dict[str, Optional[int]] = Field(default_factory=dict)
+
+
+# ==================== Suppression ====================
+
+class SuppressedCase(BaseModel):
+    """A strong match hidden by the active hard filters."""
+    case_id: str
+    case_name: str = ""
+    score: Optional[float] = None
+    failing_filters: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+# ==================== Search response ====================
 
 class SearchResponse(BaseModel):
-    """Schema for search API response"""
-    query: str = Field(..., description="Search query that was executed")
-    total_results: int = Field(..., ge=0, description="Total number of results found")
-    results: List[CaseResponse] = Field(default_factory=list, description="List of matching cases")
-    search_time_ms: float = Field(..., description="Search execution time in milliseconds")
-    timestamp: datetime = Field(default_factory=datetime.now, description="Response timestamp")
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "query": "constitution",
-                "total_results": 3,
-                "results": [],
-                "search_time_ms": 12.5,
-                "timestamp": "2024-03-01T10:30:00"
-            }
-        }
+    query: Optional[str] = None
+    total_cases: int = 0
+    took_ms: float = 0.0
+    results: List[CaseResult] = Field(default_factory=list)
+    facets: Facets = Field(default_factory=Facets)
+    suppressed: List[SuppressedCase] = Field(
+        default_factory=list, description="Populated only when query + filters coexist"
+    )
+
+
+# ==================== History ====================
+
+class HistoryItem(BaseModel):
+    query: Optional[str] = None
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    timestamp: Optional[datetime] = None
+
+
+# ==================== Case detail ====================
+
+class CaseCitation(BaseModel):
+    cited_canonical_key: Optional[str] = None
+    relationship: Optional[str] = None
+    chunk_id: Optional[str] = None
+
+
+class CaseDetail(BaseModel):
+    case_id: str
+    case_name: str = ""
+    citation: Optional[str] = None
+    court: Optional[str] = None
+    case_type: Optional[str] = None
+    verdict: Optional[str] = None
+    year: Optional[int] = None
+    date_decided: Optional[str] = None
+    bench: List[str] = Field(default_factory=list)
+    bench_strength: Optional[int] = None
+    acts_cited: List[str] = Field(default_factory=list)
+    sections_cited: List[str] = Field(default_factory=list)
+    pdf_url: Optional[str] = None
+    chunks: List[MatchedChunk] = Field(default_factory=list)
+    cites: List[CaseCitation] = Field(default_factory=list)
+
 
 # ==================== Authentication Schemas ====================
 
@@ -65,16 +123,19 @@ class LoginRequest(BaseModel):
     email: str = Field(..., description="User email address")
     password: str = Field(..., min_length=6, description="User password")
 
+
 class SignUpRequest(BaseModel):
     """Schema for sign up request"""
     email: str = Field(..., description="User email address")
     password: str = Field(..., min_length=6, description="User password")
+
 
 class AuthResponse(BaseModel):
     """Schema for authentication response"""
     access_token: str = Field(..., description="JWT access token")
     user_id: str = Field(..., description="User ID")
     message: str = Field(default="Authentication successful")
+
 
 # ==================== Error Response ====================
 

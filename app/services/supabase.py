@@ -18,11 +18,18 @@ class SupabaseService:
     """
     
     def __init__(self):
-        """Initialize Supabase client"""
+        """Initialize Supabase clients (anon for auth, service-role for data + storage)."""
         try:
             self.client: Client = create_client(
                 supabase_url=settings.SUPABASE_URL,
                 supabase_key=settings.SUPABASE_ANON_KEY
+            )
+            # Service-role client: reads `cases`/`chunk_bboxes` and mints signed PDF
+            # URLs, bypassing RLS. Falls back to anon if the key isn't set.
+            self.admin: Client = (
+                create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
+                if settings.SUPABASE_SERVICE_ROLE_KEY
+                else self.client
             )
             logger.info("✅ Supabase client initialized")
         except Exception as e:
@@ -181,6 +188,65 @@ class SupabaseService:
             logger.error(f"❌ Error searching cases: {str(e)}")
             return []
     
+    # ==================== Search Enrichment (OpenSearch -> Supabase) ====================
+
+    def get_cases_by_ids(self, case_ids: List[str]) -> Dict[str, Dict]:
+        """Batch-fetch case rows. Returns {case_id: row}."""
+        if not case_ids:
+            return {}
+        try:
+            resp = self.admin.table("cases").select("*").in_("case_id", case_ids).execute()
+            return {r["case_id"]: r for r in (resp.data or [])}
+        except Exception as e:
+            logger.error(f"❌ get_cases_by_ids failed: {str(e)}")
+            return {}
+
+    def get_chunk_bboxes_by_ids(self, chunk_ids: List[str]) -> Dict[str, Dict]:
+        """Batch-fetch {chunk_id: {page_range, bbox}} for PDF highlighting."""
+        if not chunk_ids:
+            return {}
+        try:
+            resp = self.admin.table("chunk_bboxes").select("*").in_("chunk_id", chunk_ids).execute()
+            return {r["chunk_id"]: r for r in (resp.data or [])}
+        except Exception as e:
+            logger.error(f"❌ get_chunk_bboxes_by_ids failed: {str(e)}")
+            return {}
+
+    def get_case_by_id(self, case_id: str) -> Optional[Dict]:
+        """Fetch a single case row by case_id (PK)."""
+        try:
+            resp = self.admin.table("cases").select("*").eq("case_id", case_id).execute()
+            return resp.data[0] if resp.data else None
+        except Exception as e:
+            logger.error(f"❌ get_case_by_id failed: {str(e)}")
+            return None
+
+    def get_citations(self, case_id: str) -> List[Dict]:
+        """Outbound citation edges for a case (citation_graph)."""
+        try:
+            resp = (
+                self.admin.table("citation_graph")
+                .select("cited_canonical_key, relationship, chunk_id")
+                .eq("citing_case_id", case_id)
+                .execute()
+            )
+            return resp.data or []
+        except Exception as e:
+            logger.error(f"❌ get_citations failed: {str(e)}")
+            return []
+
+    def get_pdf_signed_url(self, case_id: str, expiry: Optional[int] = None) -> Optional[str]:
+        """Signed URL for case_pdfs/<case_id>.pdf (Option 1 — name-by-case_id)."""
+        path = settings.PDF_PATH_TEMPLATE.format(case_id=case_id)
+        try:
+            resp = self.admin.storage.from_(settings.PDF_BUCKET).create_signed_url(
+                path, expiry or settings.PDF_SIGNED_URL_EXPIRY
+            )
+            return resp.get("signedURL") or resp.get("signedUrl")
+        except Exception as e:
+            logger.warning(f"⚠️ signed URL failed for {case_id}: {str(e)}")
+            return None
+
     def log_search(self, user_id: str, query: str, results_count: int, search_time_ms: float) -> bool:
         """
         Log a search query for analytics.
