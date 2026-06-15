@@ -2,41 +2,52 @@
 AllLegal - Legal Case Search API
 FastAPI application with Supabase integration for auth and database
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
+import time
 from app.api.routes import search, auth, cases
 from app.core.config import settings
 
-# Configure logging
+# 1. Setup Global Logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING, # Only warnings by default to keep logs clean
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("main")
+logger.setLevel(logging.INFO) # Our app specifically will log INFO
+
+# 2. Force silence noisy libraries
+for noisy_lib in ["httpx", "opensearch", "uvicorn", "supabase", "postgrest", "voyageai", "security_logger", "sqlalchemy.engine"]:
+    logging.getLogger(noisy_lib).setLevel(logging.WARNING)
 
 # Startup and shutdown events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown"""
-    logger.info("🚀 AllLegal API starting up...")
-    logger.info(f"📍 Debug Mode: {settings.DEBUG}")
-    logger.info(f"🔗 Supabase URL: {settings.SUPABASE_URL}")
+    logger.info("🚀 AllLegal API starting up (Port 8000)...")
     yield
     logger.info("🛑 AllLegal API shutting down...")
 
 # Create FastAPI app
 app = FastAPI(
     title="AllLegal - Legal Case Search API",
-    description="Search Indian legal cases via semantic kNN + hard filters over OpenSearch. Powered by Supabase.",
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
     lifespan=lifespan
 )
 
-# Add CORS middleware
+# Request logger middleware (Trimmmed)
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    duration = round((time.time() - start_time) * 1000, 1)
+    # Simple one-liner: "GET /api/search ?query=act - 200 (15ms)"
+    logger.info(f"Incoming: {request.method} {request.url.path} {request.url.query} - {response.status_code} ({duration}ms)")
+    return response
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -50,39 +61,11 @@ app.include_router(search.router, prefix="/api", tags=["search"])
 app.include_router(cases.router, prefix="/api", tags=["cases"])
 app.include_router(auth.router, prefix="/api", tags=["auth"])
 
-# Health check endpoint
-@app.get("/health")
-async def health_check():
-    """Health check endpoint - verify API is running"""
-    return {
-        "status": "healthy",
-        "service": "AllLegal API",
-        "version": "1.0.0",
-        "supabase_connected": True
-    }
-
-# Root endpoint
+# Root
 @app.get("/")
 async def root():
-    """Root endpoint - API information"""
-    return {
-        "message": "Welcome to AllLegal - Legal Case Search API",
-        "description": "Search Indian legal cases with fast boolean queries",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "status": "running",
-        "endpoints": {
-            "search": "/api/search",
-            "auth": "/api/auth/login",
-            "health": "/health"
-        }
-    }
+    return {"status": "running", "service": "AllLegal API"}
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "main:app",
-        host=settings.HOST,
-        port=settings.PORT,
-        reload=settings.DEBUG
-    )
+    uvicorn.run("main:app", host=settings.HOST, port=settings.PORT, reload=settings.DEBUG)

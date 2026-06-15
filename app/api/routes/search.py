@@ -122,7 +122,7 @@ def _build_case_result(group: dict, case_row: Optional[dict], bboxes: dict) -> C
 # ------------------------------------------------------------------ /search
 @router.get("/search", response_model=SearchResponse)
 def search(
-    q: Optional[str] = Query(None, max_length=500, description="Semantic query; empty = filter-only"),
+    q: Optional[str] = Query(None, alias="query", max_length=500, description="Semantic query; empty = filter-only"),
     court: Optional[List[str]] = Query(None),
     case_type: Optional[List[str]] = Query(None),
     verdict: Optional[List[str]] = Query(None),
@@ -142,10 +142,17 @@ def search(
     filters = _collect_filters(court, case_type, verdict, acts_cited, sections_cited,
                                bench_strength, year_from, year_to)
 
+    logger.info(f"🔍 Search Request - Query: '{q}', Filters: {filters}")
+
     try:
-        query_vector = embedding_service.embed_query(q) if q else None
+        if q:
+            query_vector = embedding_service.embed_query(q)
+            logger.info(f"✅ Embedding success - Vector dim: {len(query_vector)}")
+        else:
+            query_vector = None
+            logger.info("ℹ️ No query provided - Filter-only mode")
     except Exception as e:
-        logger.warning(f"⚠️ query embedding failed, falling back to filter-only: {e}")
+        logger.error(f"❌ query embedding failed: {e}", exc_info=True)
         query_vector = None
 
     # Over-fetch chunks so grouping yields enough distinct cases for this page.
@@ -156,8 +163,9 @@ def search(
 
     try:
         hits = opensearch_service.search(query_vector=query_vector, filters=filters, size=fetch_size)
+        logger.info(f"📡 OpenSearch returned {len(hits)} hits")
     except Exception as e:
-        logger.error(f"❌ OpenSearch search failed: {e}")
+        logger.error(f"❌ OpenSearch search failed: {e}", exc_info=True)
         raise HTTPException(status_code=502, detail="Search backend unavailable")
 
     grouped = _group_by_case(hits, settings.MAX_CHUNKS_PER_CASE)

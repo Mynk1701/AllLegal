@@ -81,7 +81,13 @@ class OpenSearchService:
         """Return raw chunk hits (over-fetched for case grouping)."""
         clauses = self._filter_clauses(filters)
         if query_vector is not None:
-            knn = {"chunk_embedding": {"vector": query_vector, "k": max(size, settings.KNN_K)}}
+            knn = {
+                "chunk_embedding": {
+                    "vector": query_vector, 
+                    "k": max(size, settings.KNN_K),
+                    "method_parameters": {"ef_search": 256}
+                }
+            }
             if clauses:
                 knn["chunk_embedding"]["filter"] = {"bool": {"filter": clauses}}
             body = {"size": size, "_source": SOURCE_FIELDS, "query": {"knn": knn}}

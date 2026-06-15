@@ -6,8 +6,8 @@ from jwt import PyJWKClient
 import logging
 
 # Set up logging for this specific module
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("security_logger")
+logger.setLevel(logging.INFO)
 
 security = HTTPBearer()
 

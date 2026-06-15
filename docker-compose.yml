@@ -33,24 +33,32 @@ services:
       timeout: 5s
       retries: 5
 
-  # Meilisearch for full-text case searching (faster and simpler than OpenSearch)
-  meilisearch:
-    image: getmeili/meilisearch:latest
-    container_name: alllegal_meilisearch
+  # OpenSearch for Hybrid Semantic Search (Matching Co-founder's config)
+  opensearch:
+    image: opensearchproject/opensearch:2.19.5
+    container_name: law-opensearch
     ports:
-      - "7700:7700"
+      - "9200:9200"
     environment:
-      MEILI_MASTER_KEY: ${MEILISEARCH_MASTER_KEY}
-      MEILI_ENV: production
+      - cluster.name=law-helper-dev
+      - node.name=opensearch-node1
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms1500m -Xmx1500m"
+      - knn.memory.circuit_breaker.enabled=true
+      - knn.memory.circuit_breaker.limit=60%
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
     volumes:
-      - meilisearch_data:/meili_data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - opensearch_opensearch-data:/usr/share/opensearch/data
 
 volumes:
   postgres_data:
   redis_data:
-  meilisearch_data:
+  opensearch_opensearch-data:
+    external: true

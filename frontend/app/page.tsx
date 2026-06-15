@@ -2,76 +2,68 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Filter, BookOpen, Scale, Clock, ChevronRight, FileText, ExternalLink, Info, LogOut, User, Sparkles, TrendingUp, History } from 'lucide-react';
+import { Search, Filter, BookOpen, Scale, Clock, ChevronRight, FileText, ExternalLink, Info, LogOut, User, Sparkles, TrendingUp, History, Gavel, AlertCircle } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { createClient } from '@/utils/supabase/client';
 import { logout } from './auth/actions';
+import { SearchResponse, CaseResult, MatchedChunk } from '@/types/legal';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-// Mock Data
-const MOCK_RESULTS = [
-  {
-    chunk_id: '1',
-    case_name: 'Kesavananda Bharati v. State of Kerala',
-    court: 'Supreme Court of India',
-    year: 1973,
-    segment_label: 'RatioOfTheDecision',
-    raw_text: 'The power of amendment under Article 368 does not include the power to alter the basic structure or framework of the Constitution. There are inherent limitations on the amending power of the Parliament which prevents it from damaging the essential features of the Constitution.',
-    page_number: 45,
-    statute_tags: ['Constitution Article 368', 'Article 13'],
-    precedent_citations: ['Golaknath v. State of Punjab'],
-    relevance_score: 0.98
-  },
-  {
-    chunk_id: '2',
-    case_name: 'Maneka Gandhi v. Union of India',
-    court: 'Supreme Court of India',
-    year: 1978,
-    segment_label: 'RatioOfTheDecision',
-    raw_text: 'The expression "personal liberty" in Article 21 is of the widest amplitude and it covers a variety of rights which go to constitute the personal liberty of man. Any law depriving a person of personal liberty must not only follow a procedure established by law but such procedure must be reasonable, fair and just.',
-    page_number: 12,
-    statute_tags: ['Constitution Article 21', 'Article 14', 'Article 19'],
-    precedent_citations: ['A.K. Gopalan v. State of Madras'],
-    relevance_score: 0.95
-  },
-  {
-    chunk_id: '3',
-    case_name: 'Arnesh Kumar v. State of Bihar',
-    court: 'Supreme Court of India',
-    year: 2014,
-    segment_label: 'FinalDecision',
-    raw_text: 'We direct that the police officers shall not arrest the accused unnecessarily and the Magistrate shall not authorize detention casually and mechanically. In all cases where the offense is punishable with imprisonment for a term which may be less than seven years, the arrest may be made only if conditions under Section 41 of Cr.PC are satisfied.',
-    page_number: 8,
-    statute_tags: ['CrPC Section 41', 'IPC Section 498A'],
-    precedent_citations: [],
-    relevance_score: 0.92
-  }
-];
-
 const ROLE_COLORS: Record<string, string> = {
   RatioOfTheDecision: 'bg-indigo-50 text-indigo-700 border-indigo-200 ring-indigo-500/10',
+  'Ratio of the decision': 'bg-indigo-50 text-indigo-700 border-indigo-200 ring-indigo-500/10',
   FinalDecision: 'bg-emerald-50 text-emerald-700 border-emerald-200 ring-emerald-500/10',
+  'Ruling by Present Court': 'bg-emerald-50 text-emerald-700 border-emerald-200 ring-emerald-500/10',
   Statute: 'bg-purple-50 text-purple-700 border-purple-200 ring-purple-500/10',
   Argument: 'bg-amber-50 text-amber-700 border-amber-200 ring-amber-500/10',
   Fact: 'bg-slate-50 text-slate-700 border-slate-200 ring-slate-500/10',
+  Facts: 'bg-slate-50 text-slate-700 border-slate-200 ring-slate-500/10',
   Precedent: 'bg-orange-50 text-orange-700 border-orange-200 ring-orange-500/10',
   RulingByLowerCourt: 'bg-rose-50 text-rose-700 border-rose-200 ring-rose-500/10',
+  'Ruling by Lower Court': 'bg-rose-50 text-rose-700 border-rose-200 ring-rose-500/10',
 };
 
-// Define History Item Type
+const ROLE_DISPLAY_NAMES: Record<string, string> = {
+  RatioOfTheDecision: 'Ratio Decidendi',
+  'Ratio of the decision': 'Ratio Decidendi',
+  FinalDecision: 'Final Order',
+  'Ruling by Present Court': 'Final Order',
+  RulingByLowerCourt: 'Lower Court Ruling',
+  'Ruling by Lower Court': 'Lower Court Ruling',
+};
+
+// Helper to parse verdict JSON string if needed
+const parseVerdict = (verdict: any): string[] => {
+  if (!verdict) return [];
+  if (Array.isArray(verdict)) return verdict;
+  try {
+    const parsed = JSON.parse(verdict);
+    return Array.isArray(parsed) ? parsed : [String(parsed)];
+  } catch (e) {
+    return [String(verdict)];
+  }
+};
+
+const formatTagName = (tag: string) => {
+  return tag.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+};
+
+// Define History Item Type from API
 interface HistoryItem {
-  query: string;
+  query: string | null;
+  filters: any;
   timestamp: string;
 }
 
 export default function LegalSearchApp() {
   const [query, setQuery] = useState('');
-  const [selectedResult, setSelectedResult] = useState(MOCK_RESULTS[0]);
+  const [searchResponse, setSearchResponse] = useState<SearchResponse | null>(null);
+  const [selectedCase, setSelectedCase] = useState<CaseResult | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [searchHistory, setSearchHistory] = useState<HistoryItem[]>([]);
@@ -86,17 +78,19 @@ export default function LegalSearchApp() {
         router.push('/login');
       } else {
         setUser(user);
-        fetchHistory(user); // Fetch history
+        fetchHistory(); // Fetch history
       }
     }
     getUser();
   }, [router, supabase.auth]);
 
-  async function fetchHistory(user: any) {
+  async function fetchHistory() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
       const response = await fetch('http://localhost:8000/api/search/history', {
-        headers: { 'Authorization': `Bearer ${session?.access_token}` }
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
       });
       if (response.ok) {
         const data = await response.json();
@@ -109,19 +103,25 @@ export default function LegalSearchApp() {
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim()) return;
     
     setIsSearching(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
       const response = await fetch(`http://localhost:8000/api/search?query=${encodeURIComponent(query)}`, {
-        headers: { 'Authorization': `Bearer ${session?.access_token}` }
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
       });
 
       if (response.ok) {
-        const data = await response.json();
-        console.log('Search results:', data);
-        fetchHistory(user); // Refresh history
+        const data: SearchResponse = await response.json();
+        setSearchResponse(data);
+        if (data.results.length > 0) {
+          setSelectedCase(data.results[0]);
+        } else {
+          setSelectedCase(null);
+        }
+        fetchHistory(); // Refresh history
       }
     } catch (err) {
       console.error('Search error:', err);
@@ -166,13 +166,15 @@ export default function LegalSearchApp() {
                 <button
                   key={index}
                   onClick={() => {
-                    setQuery(item.query);
-                    handleSearch({ preventDefault: () => {} } as any);
+                    setQuery(item.query || '');
+                    // Force search with the history query
+                    const syntheticEvent = { preventDefault: () => {} } as React.FormEvent;
+                    handleSearch(syntheticEvent);
                   }}
                   className="w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-lg transition-all truncate"
                 >
                   <Clock className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">{item.query}</span>
+                  <span className="truncate">{item.query || 'Filter Only'}</span>
                 </button>
               ))}
             </nav>
@@ -247,7 +249,7 @@ export default function LegalSearchApp() {
               />
               <div className="absolute right-3 flex items-center gap-2">
                 <span className="hidden sm:flex px-2 py-1 bg-slate-100 text-[10px] font-bold text-slate-400 rounded-md border border-slate-200 tracking-tighter uppercase">⌘ K</span>
-                <button className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-xl transition-all shadow-lg shadow-blue-500/20 active:scale-95">
+                <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-xl transition-all shadow-lg shadow-blue-500/20 active:scale-95">
                   <ChevronRight className="w-5 h-5" />
                 </button>
               </div>
@@ -262,9 +264,11 @@ export default function LegalSearchApp() {
                 <Sparkles className="w-4 h-4 text-blue-500" />
                 <h2 className="text-sm font-bold text-slate-600">Top Semantic Matches</h2>
               </div>
-              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
-                Search Latency: 24ms
-              </p>
+              {searchResponse && (
+                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+                  Search Latency: {searchResponse.took_ms.toFixed(1)}ms
+                </p>
+              )}
             </div>
 
             {isSearching ? (
@@ -275,13 +279,13 @@ export default function LegalSearchApp() {
               </div>
             ) : (
               <div className="space-y-6">
-                {MOCK_RESULTS.map((result) => (
+                {searchResponse?.results.map((result) => (
                   <div
-                    key={result.chunk_id}
-                    onClick={() => setSelectedResult(result)}
+                    key={result.case_id}
+                    onClick={() => setSelectedCase(result)}
                     className={cn(
                       "group p-6 rounded-[32px] border transition-all cursor-pointer relative overflow-hidden",
-                      selectedResult?.chunk_id === result.chunk_id 
+                      selectedCase?.case_id === result.case_id 
                         ? "bg-white border-blue-500 shadow-2xl shadow-blue-500/10 ring-1 ring-blue-500" 
                         : "bg-white/70 border-slate-200/80 hover:bg-white hover:border-slate-300 hover:shadow-xl hover:shadow-slate-200/40"
                     )}
@@ -291,37 +295,71 @@ export default function LegalSearchApp() {
                     
                     <div className="flex justify-between items-start gap-4 mb-4">
                       <div className="space-y-1">
-                        <h4 className="font-extrabold text-lg text-slate-900 leading-tight group-hover:text-blue-600 transition-colors">
-                          {result.case_name}
-                        </h4>
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-extrabold text-lg text-slate-900 leading-tight group-hover:text-blue-600 transition-colors">
+                            {result.case_name}
+                          </h4>
+                          {result.score ? (
+                            <div className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded-full border border-blue-100 shrink-0">
+                              {Math.round(result.score * 100)}% Match
+                            </div>
+                          ) : (
+                            <div className="px-2 py-0.5 bg-slate-50 text-slate-400 text-[10px] font-bold rounded-full border border-slate-100 shrink-0">
+                              Date Ranked
+                            </div>
+                          )}
+                        </div>
                         <div className="flex items-center gap-3">
                            <span className="text-[11px] font-bold text-blue-600 uppercase tracking-widest">{result.court}</span>
                            <span className="w-1 h-1 bg-slate-300 rounded-full" />
                            <span className="text-[11px] font-bold text-slate-400">{result.year}</span>
                         </div>
                       </div>
-                      <div className={cn(
-                        "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-[0.1em] border ring-1",
-                        ROLE_COLORS[result.segment_label]
-                      )}>
-                        {result.segment_label.replace(/([A-Z])/g, ' $1').trim()}
+                      <div className="flex flex-col items-end gap-2">
+                        {result.matched_chunks[0]?.chunk_type && (
+                          <div className={cn(
+                            "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-[0.1em] border ring-1",
+                            ROLE_COLORS[result.matched_chunks[0].chunk_type] || 'bg-slate-50 text-slate-600'
+                          )}>
+                            {ROLE_DISPLAY_NAMES[result.matched_chunks[0].chunk_type] || result.matched_chunks[0].chunk_type}
+                          </div>
+                        )}
+                        {parseVerdict(result.verdict).length > 0 && (
+                          <div className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-bold uppercase rounded border border-emerald-100">
+                            <Gavel className="w-2.5 h-2.5" />
+                            {formatTagName(parseVerdict(result.verdict)[0])}
+                          </div>
+                        )}
                       </div>
                     </div>
                     
                     <p className="text-sm text-slate-600 font-medium leading-[1.7] mb-6 line-clamp-3">
-                      {result.raw_text}
+                      {result.matched_chunks[0]?.chunk_text || 'No preview available.'}
                     </p>
 
                     <div className="flex flex-wrap gap-2">
-                      {result.statute_tags.map(tag => (
+                      {/* Show specific sections first, then acts if no sections */}
+                      {(result.sections_cited.length > 0 ? result.sections_cited : result.acts_cited).slice(0, 4).map(tag => (
                         <div key={tag} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 text-slate-600 text-[10px] font-bold rounded-xl border border-slate-200/60 group-hover:bg-blue-50/50 group-hover:border-blue-100 transition-all">
                           <FileText className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-500" />
                           {tag}
                         </div>
                       ))}
+                      {(result.sections_cited.length > 4 || (result.sections_cited.length === 0 && result.acts_cited.length > 4)) && (
+                        <span className="text-[10px] font-bold text-slate-400 px-2 py-1.5">
+                          +{Math.max(result.sections_cited.length, result.acts_cited.length) - 4} more
+                        </span>
+                      )}
                     </div>
                   </div>
                 ))}
+
+                {searchResponse?.results.length === 0 && !isSearching && (
+                  <div className="text-center py-20">
+                    <Info className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+                    <p className="text-slate-500 font-medium">No cases found matching your criteria.</p>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -330,60 +368,74 @@ export default function LegalSearchApp() {
 
       {/* RIGHT PANE - JUDGMENT READER */}
       <aside className="w-[480px] border-l border-slate-200 bg-white flex flex-col shrink-0 relative z-30 shadow-[-10px_0_30px_rgba(0,0,0,0.02)]">
-        {selectedResult ? (
+        {selectedCase ? (
           <>
             <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-white/80 backdrop-blur-md sticky top-0 z-10">
               <h3 className="font-extrabold text-slate-900 flex items-center gap-2">
                 <BookOpen className="w-4 h-4 text-blue-600" /> Analysis
               </h3>
               <div className="flex gap-2">
-                <button className="p-2 hover:bg-slate-50 rounded-lg transition-colors border border-slate-100">
+                <a 
+                  href={selectedCase.pdf_url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="p-2 hover:bg-slate-50 rounded-lg transition-colors border border-slate-100"
+                >
                   <ExternalLink className="w-4 h-4 text-slate-400" />
-                </button>
+                </a>
               </div>
             </div>
             
             <div className="flex-1 overflow-y-auto px-8 py-10 space-y-10">
               <div className="space-y-4">
                 <div className="space-y-1">
-                  <p className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em]">Judgment Extract</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em]">Judgment Extract</p>
+                    {parseVerdict(selectedCase.verdict).length > 0 && (
+                      <span className="px-2 py-0.5 bg-emerald-600 text-white text-[9px] font-black uppercase rounded shadow-sm">
+                        {formatTagName(parseVerdict(selectedCase.verdict)[0])}
+                      </span>
+                    )}
+                  </div>
                   <h2 className="text-2xl font-black leading-tight text-slate-900 tracking-tight italic">
-                    “{selectedResult.case_name}”
+                    “{selectedCase.case_name}”
                   </h2>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <span className="text-[11px] bg-slate-900 text-white px-3 py-1 rounded-lg font-bold">
-                    EST. {selectedResult.year}
+                    {selectedCase.citation || `EST. ${selectedCase.year}`}
                   </span>
                   <span className="text-[11px] bg-blue-50 text-blue-700 px-3 py-1 rounded-lg font-bold border border-blue-100">
-                    Paragraph 204
+                    {selectedCase.court}
                   </span>
                   <span className="text-[11px] bg-slate-50 text-slate-500 px-3 py-1 rounded-lg font-bold border border-slate-100">
-                    Pg. {selectedResult.page_number}
+                    Bench: {selectedCase.bench_strength || selectedCase.bench.length || 'Unknown'}
                   </span>
                 </div>
               </div>
 
-              <div className="relative">
-                <div className="absolute -left-6 top-0 bottom-0 w-1 bg-blue-600/20 rounded-full" />
-                <div className="flex items-center gap-2 mb-4">
-                   <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                   <span className="text-[11px] font-black uppercase tracking-[0.2em] text-blue-600">
-                     Core Reasoning
-                   </span>
+              {selectedCase.matched_chunks.map((chunk, idx) => (
+                <div key={chunk.chunk_id} className="relative">
+                  <div className="absolute -left-6 top-0 bottom-0 w-1 bg-blue-600/20 rounded-full" />
+                  <div className="flex items-center gap-2 mb-4">
+                    <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                    <span className="text-[11px] font-black uppercase tracking-[0.2em] text-blue-600">
+                      {ROLE_DISPLAY_NAMES[chunk.chunk_type || ''] || chunk.chunk_type || `Match ${idx + 1}`}
+                    </span>
+                  </div>
+                  <p className="text-slate-800 leading-[1.8] text-[17px] font-serif font-medium selection:bg-blue-200">
+                    {chunk.chunk_text}
+                  </p>
                 </div>
-                <p className="text-slate-800 leading-[1.8] text-[17px] font-serif font-medium selection:bg-blue-200">
-                  {selectedResult.raw_text}
-                </p>
-              </div>
+              ))}
 
-              {selectedResult.statute_tags.length > 0 && (
+              {(selectedCase.sections_cited.length > 0 || selectedCase.acts_cited.length > 0) && (
                 <div className="space-y-4">
                   <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
                     <Info className="w-3.5 h-3.5" /> Contextual Landmarks
                   </h4>
                   <div className="grid gap-2">
-                    {selectedResult.statute_tags.map(tag => (
+                    {(selectedCase.sections_cited.length > 0 ? selectedCase.sections_cited : selectedCase.acts_cited).map(tag => (
                       <div key={tag} className="group flex items-center justify-between p-4 bg-slate-50/50 hover:bg-white rounded-2xl border border-slate-100 hover:border-blue-200 hover:shadow-lg hover:shadow-blue-500/5 transition-all cursor-pointer">
                         <div className="flex items-center gap-3">
                            <div className="w-8 h-8 rounded-lg bg-white border border-slate-100 flex items-center justify-center text-blue-600 group-hover:scale-110 transition-transform">
@@ -398,10 +450,15 @@ export default function LegalSearchApp() {
                 </div>
               )}
 
-              <button className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold text-sm shadow-2xl shadow-slate-900/20 hover:bg-slate-800 transition-all flex items-center justify-center gap-3 group active:scale-[0.98]">
+              <a 
+                href={selectedCase.pdf_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold text-sm shadow-2xl shadow-slate-900/20 hover:bg-slate-800 transition-all flex items-center justify-center gap-3 group active:scale-[0.98]"
+              >
                 <FileText className="w-4 h-4 group-hover:rotate-12 transition-transform" /> 
                 Open Verified Judgment
-              </button>
+              </a>
             </div>
           </>
         ) : (
