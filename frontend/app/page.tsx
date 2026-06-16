@@ -67,22 +67,18 @@ export default function LegalSearchApp() {
   const [isSearching, setIsSearching] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [searchHistory, setSearchHistory] = useState<HistoryItem[]>([]);
+  
+  // Real Filter States
+  const [selectedCourts, setSelectedCourts] = useState<string[]>([]);
+  const [selectedCaseTypes, setSelectedCaseTypes] = useState<string[]>([]);
+  const [selectedVerdicts, setSelectedVerdicts] = useState<string[]>([]);
+  const [actsCited, setActsCited] = useState<string>('');
+  const [sectionsCited, setSectionsCited] = useState<string>('');
+  const [yearFrom, setYearFrom] = useState<string>('');
+  const [yearTo, setYearTo] = useState<string>('');
+
   const router = useRouter();
   const supabase = createClient();
-
-  // Authentication Check
-  useEffect(() => {
-    async function getUser() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push('/login');
-      } else {
-        setUser(user);
-        fetchHistory(); // Fetch history
-      }
-    }
-    getUser();
-  }, [router, supabase.auth]);
 
   async function fetchHistory() {
     try {
@@ -101,6 +97,29 @@ export default function LegalSearchApp() {
     }
   }
 
+  // Authentication Check
+  useEffect(() => {
+    async function getUser() {
+      console.log("🔍 Checking auth status...");
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        console.log("📡 Supabase Response:", { user: data?.user, error });
+        
+        if (error || !data?.user) {
+          console.log("❌ No user found, redirecting to /login");
+          router.push('/login');
+        } else {
+          console.log("✅ User authenticated:", data.user.email);
+          setUser(data.user);
+          fetchHistory(); 
+        }
+      } catch (err) {
+        console.error("💥 Unexpected Auth Error:", err);
+      }
+    }
+    getUser();
+  }, [router, supabase.auth]);
+
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -109,7 +128,25 @@ export default function LegalSearchApp() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
-      const response = await fetch(`http://localhost:8000/api/search?query=${encodeURIComponent(query)}`, {
+      // Build Query Params using standard API names from search.py
+      const params = new URLSearchParams();
+      if (query) params.append('query', query);
+      selectedCourts.forEach(c => params.append('court', c));
+      selectedCaseTypes.forEach(t => params.append('case_type', t));
+      selectedVerdicts.forEach(v => params.append('verdict', v));
+      
+      // Handle comma-separated inputs for acts/sections
+      if (actsCited) {
+        actsCited.split(',').forEach(a => params.append('acts_cited', a.trim()));
+      }
+      if (sectionsCited) {
+        sectionsCited.split(',').forEach(s => params.append('sections_cited', s.trim()));
+      }
+
+      if (yearFrom) params.append('year_from', yearFrom);
+      if (yearTo) params.append('year_to', yearTo);
+
+      const response = await fetch(`http://localhost:8000/api/search?${params.toString()}`, {
         headers: { 'Authorization': `Bearer ${session.access_token}` }
       });
 
@@ -127,6 +164,14 @@ export default function LegalSearchApp() {
       console.error('Search error:', err);
     } finally {
       setIsSearching(false);
+    }
+  };
+
+  const toggleFilter = (list: string[], setList: (v: string[]) => void, value: string) => {
+    if (list.includes(value)) {
+      setList(list.filter(i => i !== value));
+    } else {
+      setList([...list, value]);
     }
   };
 
@@ -183,27 +228,121 @@ export default function LegalSearchApp() {
           <div>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Refinement</h3>
-              <button className="text-[10px] font-bold text-blue-600 uppercase">Clear</button>
+              <button 
+                onClick={() => {
+                  setSelectedCourts([]);
+                  setSelectedCaseTypes([]);
+                  setSelectedVerdicts([]);
+                  setYearFrom('');
+                  setYearTo('');
+                }}
+                className="text-[10px] font-bold text-blue-600 uppercase hover:text-blue-700 transition-colors"
+              >
+                Clear
+              </button>
             </div>
-            <div className="space-y-5">
+            
+            <div className="space-y-6">
+              {/* JURISDICTION / COURT */}
               <div className="space-y-2">
                 <label className="text-[11px] font-bold text-slate-700 ml-1">Jurisdiction</label>
-                <select className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500 transition-all outline-none appearance-none cursor-pointer">
-                  <option>Supreme Court of India</option>
-                  <option>All High Courts</option>
-                  <option>Delhi High Court</option>
-                </select>
-              </div>
-              
-              <div className="space-y-2">
-                <label className="text-[11px] font-bold text-slate-700 ml-1">Role Hierarchy</label>
                 <div className="grid grid-cols-1 gap-1.5">
-                  {['Ratio Decidendi', 'Statutory Context', 'Precedential Value'].map(role => (
-                    <label key={role} className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-slate-100 hover:bg-slate-50 cursor-pointer transition-all">
-                      <input type="checkbox" className="w-4 h-4 rounded-md border-slate-300 text-blue-600 focus:ring-blue-500/20" />
-                      <span className="text-xs font-semibold text-slate-600">{role}</span>
+                  {['Supreme Court', 'Delhi High Court', 'Bombay High Court'].map(court => (
+                    <label key={court} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-slate-100 hover:bg-slate-50 cursor-pointer transition-all">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedCourts.includes(court)}
+                        onChange={() => toggleFilter(selectedCourts, setSelectedCourts, court)}
+                        className="w-4 h-4 rounded-md border-slate-300 text-blue-600 focus:ring-blue-500/20" 
+                      />
+                      <span className="text-xs font-semibold text-slate-600">{court}</span>
                     </label>
                   ))}
+                </div>
+              </div>
+
+              {/* CASE TYPE */}
+              <div className="space-y-2">
+                <label className="text-[11px] font-bold text-slate-700 ml-1">Case Type</label>
+                <div className="grid grid-cols-1 gap-1.5">
+                  {['Criminal', 'Civil', 'Constitutional', 'Tax'].map(type => (
+                    <label key={type} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-slate-100 hover:bg-slate-50 cursor-pointer transition-all">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedCaseTypes.includes(type)}
+                        onChange={() => toggleFilter(selectedCaseTypes, setSelectedCaseTypes, type)}
+                        className="w-4 h-4 rounded-md border-slate-300 text-blue-600 focus:ring-blue-500/20" 
+                      />
+                      <span className="text-xs font-semibold text-slate-600">{type}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* VERDICT */}
+              <div className="space-y-2">
+                <label className="text-[11px] font-bold text-slate-700 ml-1">Outcome</label>
+                <div className="grid grid-cols-1 gap-1.5">
+                  {['Allowed', 'Dismissed', 'Partly Allowed'].map(verdict => (
+                    <label key={verdict} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-slate-100 hover:bg-slate-50 cursor-pointer transition-all">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedVerdicts.includes(verdict)}
+                        onChange={() => toggleFilter(selectedVerdicts, setSelectedVerdicts, verdict)}
+                        className="w-4 h-4 rounded-md border-slate-300 text-blue-600 focus:ring-blue-500/20" 
+                      />
+                      <span className="text-xs font-semibold text-slate-600">{verdict}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* YEAR RANGE */}
+              <div className="space-y-2">
+                <label className="text-[11px] font-bold text-slate-700 ml-1">Year Range</label>
+                <div className="flex gap-2 px-1">
+                  <input 
+                    type="text" 
+                    placeholder="From" 
+                    value={yearFrom}
+                    onChange={(e) => setYearFrom(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-[10px] font-bold focus:ring-2 focus:ring-blue-500/20 outline-none" 
+                  />
+                  <input 
+                    type="text" 
+                    placeholder="To" 
+                    value={yearTo}
+                    onChange={(e) => setYearTo(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-[10px] font-bold focus:ring-2 focus:ring-blue-500/20 outline-none" 
+                  />
+                </div>
+              </div>
+
+              {/* ACTS & SECTIONS */}
+              <div className="space-y-4 pt-2 border-t border-slate-100">
+                <div className="space-y-2">
+                  <label className="text-[11px] font-bold text-slate-700 ml-1 flex items-center gap-2">
+                    <FileText className="w-3 h-3" /> Acts Cited
+                  </label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. IPC, BNSS" 
+                    value={actsCited}
+                    onChange={(e) => setActsCited(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs font-semibold focus:ring-2 focus:ring-blue-500/20 outline-none" 
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[11px] font-bold text-slate-700 ml-1 flex items-center gap-2">
+                    <History className="w-3 h-3" /> Sections
+                  </label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. 302, 167" 
+                    value={sectionsCited}
+                    onChange={(e) => setSectionsCited(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs font-semibold focus:ring-2 focus:ring-blue-500/20 outline-none" 
+                  />
                 </div>
               </div>
             </div>

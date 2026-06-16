@@ -35,9 +35,59 @@ from app.services.embeddings import embedding_service
 from app.services.opensearch_service import opensearch_service
 from app.services.supabase import supabase_service
 
+import sys
+from pathlib import Path
+
+# Add legal-engine to path for StatuteIndex
+LEGAL_ENGINE_PATH = Path(__file__).resolve().parent.parent.parent.parent / "legal-engine" / "src" / "scripts"
+if str(LEGAL_ENGINE_PATH) not in sys.path:
+    sys.path.insert(0, str(LEGAL_ENGINE_PATH))
+
+try:
+    from statute_index import StatuteIndex
+    statute_index = StatuteIndex()
+except ImportError:
+    logger.warning("⚠️ StatuteIndex not found, normalization disabled")
+    statute_index = None
+
+# ... (rest of imports)
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# ----------------------------------------------------------------- normalization
+COURT_MAP = {
+    "Supreme Court": "SC",
+    "Delhi High Court": "DHC",
+    "Bombay High Court": "BHC",
+}
+
+def _normalize_filters(filters: dict) -> dict:
+    """Standardize UI values to match OpenSearch index keys."""
+    norm = filters.copy()
+    
+    # Map "Supreme Court" -> "SC" (Standard Pipeline Code)
+    if "court" in norm and norm["court"]:
+        # Standardizing to what stage_05_index.py uses
+        norm["court"] = ["SC" if c == "Supreme Court" else c for c in norm["court"]]
+    
+    # Normalize Verdicts: "Partly Allowed" -> "partly_allowed"
+    if "verdict" in norm and norm["verdict"]:
+        norm["verdict"] = [v.lower().replace(" ", "_") for v in norm["verdict"]]
+
+    # Normalize Case Type: "Criminal" -> "criminal"
+    if "case_type" in norm and norm["case_type"]:
+        norm["case_type"] = [t.lower() for t in norm["case_type"]]
+    
+    # Standardize "302 IPC" -> "BNS s.103"
+    if statute_index and "sections_cited" in norm and norm["sections_cited"]:
+        standardized = []
+        for s in norm["sections_cited"]:
+            res = statute_index.lookup(s)
+            standardized.append(res["canonical"] if res else s)
+        norm["sections_cited"] = standardized
+        
+    return norm
 
 # ----------------------------------------------------------------- helpers
 def _collect_filters(court, case_type, verdict, acts_cited, sections_cited,
@@ -141,6 +191,7 @@ def search(
     q = (q or "").strip() or None
     filters = _collect_filters(court, case_type, verdict, acts_cited, sections_cited,
                                bench_strength, year_from, year_to)
+    filters = _normalize_filters(filters)
 
     logger.info(f"🔍 Search Request - Query: '{q}', Filters: {filters}")
 
@@ -230,6 +281,7 @@ def facets(
     q = (q or "").strip() or None
     filters = _collect_filters(court, case_type, verdict, acts_cited, sections_cited,
                                bench_strength, year_from, year_to)
+    filters = _normalize_filters(filters)
     try:
         query_vector = embedding_service.embed_query(q) if q else None
     except Exception as e:
