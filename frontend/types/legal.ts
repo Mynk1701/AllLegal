@@ -7,6 +7,8 @@ export type RhetoricalRole =
   | 'RulingByLowerCourt' 
   | 'FinalDecision';
 
+import type { Bbox } from '@/lib/reader/types';
+
 export interface MatchedChunk {
   chunk_id: string;
   chunk_type?: string;
@@ -14,7 +16,7 @@ export interface MatchedChunk {
   chunk_sequence?: number;
   score?: number;
   page_range?: [number, number];
-  bbox?: any; // List of per-block bounding boxes
+  bbox?: Bbox; // page-tagged native rects: [{ page, rect:[x0,y0,x1,y1] }]
 }
 
 export interface CaseResult {

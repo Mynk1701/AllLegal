@@ -38,22 +38,28 @@ from app.services.supabase import supabase_service
 import sys
 from pathlib import Path
 
-# Add legal-engine to path for StatuteIndex
-LEGAL_ENGINE_PATH = Path(__file__).resolve().parent.parent.parent.parent / "legal-engine" / "src" / "scripts"
-if str(LEGAL_ENGINE_PATH) not in sys.path:
-    sys.path.insert(0, str(LEGAL_ENGINE_PATH))
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+# Connect to the data pipeline's StatuteIndex (statute-citation normalization).
+# It lives in the parent pipeline repo at <root>/src/scripts, NOT inside AllLegal.
+# parents[4] = repo root (search.py: routes→api→app→AllLegal→root). This matches
+# the parent-repo assumption already used by scripts/upload_pdfs_to_supabase.py.
+# NOTE: if AllLegal is ever deployed standalone (without the parent repo present),
+# vendor statute_index.py + annotatedCentralActs/ in and repoint this path.
+STATUTE_INDEX_PATH = Path(__file__).resolve().parents[4] / "src" / "scripts"
+if str(STATUTE_INDEX_PATH) not in sys.path:
+    sys.path.insert(0, str(STATUTE_INDEX_PATH))
 
 try:
     from statute_index import StatuteIndex
     statute_index = StatuteIndex()
-except ImportError:
-    logger.warning("⚠️ StatuteIndex not found, normalization disabled")
+    logger.info(f"✅ StatuteIndex loaded ({len(statute_index)} entries) from {STATUTE_INDEX_PATH}")
+except Exception as e:
+    # Broad except (not just ImportError): a missing dataset dir or any init
+    # error must degrade to "normalization off", never crash app startup.
+    logger.warning(f"⚠️ StatuteIndex unavailable — section normalization disabled: {e}")
     statute_index = None
-
-# ... (rest of imports)
-
-logger = logging.getLogger(__name__)
-router = APIRouter()
 
 # ----------------------------------------------------------------- normalization
 COURT_MAP = {

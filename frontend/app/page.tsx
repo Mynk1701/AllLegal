@@ -8,33 +8,17 @@ import { twMerge } from 'tailwind-merge';
 import { createClient } from '@/utils/supabase/client';
 import { logout } from './auth/actions';
 import { SearchResponse, CaseResult, MatchedChunk } from '@/types/legal';
+import { ROLE_COLORS, ROLE_DISPLAY_NAMES } from '@/lib/reader/roles';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const ROLE_COLORS: Record<string, string> = {
-  RatioOfTheDecision: 'bg-indigo-50 text-indigo-700 border-indigo-200 ring-indigo-500/10',
-  'Ratio of the decision': 'bg-indigo-50 text-indigo-700 border-indigo-200 ring-indigo-500/10',
-  FinalDecision: 'bg-emerald-50 text-emerald-700 border-emerald-200 ring-emerald-500/10',
-  'Ruling by Present Court': 'bg-emerald-50 text-emerald-700 border-emerald-200 ring-emerald-500/10',
-  Statute: 'bg-purple-50 text-purple-700 border-purple-200 ring-purple-500/10',
-  Argument: 'bg-amber-50 text-amber-700 border-amber-200 ring-amber-500/10',
-  Fact: 'bg-slate-50 text-slate-700 border-slate-200 ring-slate-500/10',
-  Facts: 'bg-slate-50 text-slate-700 border-slate-200 ring-slate-500/10',
-  Precedent: 'bg-orange-50 text-orange-700 border-orange-200 ring-orange-500/10',
-  RulingByLowerCourt: 'bg-rose-50 text-rose-700 border-rose-200 ring-rose-500/10',
-  'Ruling by Lower Court': 'bg-rose-50 text-rose-700 border-rose-200 ring-rose-500/10',
-};
-
-const ROLE_DISPLAY_NAMES: Record<string, string> = {
-  RatioOfTheDecision: 'Ratio Decidendi',
-  'Ratio of the decision': 'Ratio Decidendi',
-  FinalDecision: 'Final Order',
-  'Ruling by Present Court': 'Final Order',
-  RulingByLowerCourt: 'Lower Court Ruling',
-  'Ruling by Lower Court': 'Lower Court Ruling',
+// In-app reader URL, jumping to the top matched chunk when there is one.
+const readerHref = (c: CaseResult) => {
+  const chunk = c.matched_chunks[0]?.chunk_id;
+  return `/reader/${encodeURIComponent(c.case_id)}${chunk ? `?chunk=${encodeURIComponent(chunk)}` : ''}`;
 };
 
 // Helper to parse verdict JSON string if needed
@@ -53,10 +37,22 @@ const formatTagName = (tag: string) => {
   return tag.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 };
 
+// Backend filter set (already-normalized values as stored/replayed).
+interface SearchFilters {
+  court?: string[];
+  case_type?: string[];
+  verdict?: string[];
+  acts_cited?: string[];
+  sections_cited?: string[];
+  bench_strength?: (number | string)[];
+  year_from?: string | number;
+  year_to?: string | number;
+}
+
 // Define History Item Type from API
 interface HistoryItem {
   query: string | null;
-  filters: any;
+  filters: SearchFilters;
   timestamp: string;
 }
 
@@ -120,31 +116,37 @@ export default function LegalSearchApp() {
     getUser();
   }, [router, supabase.auth]);
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  // Build the backend filter set from the current sidebar UI state.
+  const collectFilters = (): SearchFilters => ({
+    court: selectedCourts,
+    case_type: selectedCaseTypes,
+    verdict: selectedVerdicts,
+    acts_cited: actsCited ? actsCited.split(',').map(s => s.trim()).filter(Boolean) : [],
+    sections_cited: sectionsCited ? sectionsCited.split(',').map(s => s.trim()).filter(Boolean) : [],
+    year_from: yearFrom || undefined,
+    year_to: yearTo || undefined,
+  });
+
+  // Single source of truth for running a search. Takes query + filters EXPLICITLY
+  // (never reads component state), so the form and a history replay produce
+  // identical, deterministic results — search is a pure function of {query, filters}.
+  const runSearch = async (queryStr: string, filters: SearchFilters) => {
     setIsSearching(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
-      // Build Query Params using standard API names from search.py
+      // Standard API names from search.py.
       const params = new URLSearchParams();
-      if (query) params.append('query', query);
-      selectedCourts.forEach(c => params.append('court', c));
-      selectedCaseTypes.forEach(t => params.append('case_type', t));
-      selectedVerdicts.forEach(v => params.append('verdict', v));
-      
-      // Handle comma-separated inputs for acts/sections
-      if (actsCited) {
-        actsCited.split(',').forEach(a => params.append('acts_cited', a.trim()));
-      }
-      if (sectionsCited) {
-        sectionsCited.split(',').forEach(s => params.append('sections_cited', s.trim()));
-      }
-
-      if (yearFrom) params.append('year_from', yearFrom);
-      if (yearTo) params.append('year_to', yearTo);
+      if (queryStr) params.append('query', queryStr);
+      (filters.court ?? []).forEach(c => params.append('court', c));
+      (filters.case_type ?? []).forEach(t => params.append('case_type', t));
+      (filters.verdict ?? []).forEach(v => params.append('verdict', v));
+      (filters.acts_cited ?? []).forEach(a => params.append('acts_cited', String(a)));
+      (filters.sections_cited ?? []).forEach(s => params.append('sections_cited', String(s)));
+      (filters.bench_strength ?? []).forEach(b => params.append('bench_strength', String(b)));
+      if (filters.year_from) params.append('year_from', String(filters.year_from));
+      if (filters.year_to) params.append('year_to', String(filters.year_to));
 
       const response = await fetch(`http://localhost:8000/api/search?${params.toString()}`, {
         headers: { 'Authorization': `Bearer ${session.access_token}` }
@@ -153,11 +155,7 @@ export default function LegalSearchApp() {
       if (response.ok) {
         const data: SearchResponse = await response.json();
         setSearchResponse(data);
-        if (data.results.length > 0) {
-          setSelectedCase(data.results[0]);
-        } else {
-          setSelectedCase(null);
-        }
+        setSelectedCase(data.results.length > 0 ? data.results[0] : null);
         fetchHistory(); // Refresh history
       }
     } catch (err) {
@@ -165,6 +163,34 @@ export default function LegalSearchApp() {
     } finally {
       setIsSearching(false);
     }
+  };
+
+  // Form submit → search the current query + sidebar filters.
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    runSearch(query, collectFilters());
+  };
+
+  // History click → replay the STORED query + filters directly. The stored
+  // filters are already normalized (court "SC", verdict "partly_allowed", …) and
+  // normalization is idempotent, so replaying them reproduces the original
+  // results exactly — instead of reading the sidebar state, which setQuery/setX
+  // have only just *scheduled* and not yet applied. We also reflect the values
+  // back into the sidebar (best-effort reverse of the backend normalization) so
+  // the UI matches what was searched.
+  const applyHistory = (item: HistoryItem) => {
+    const f = item.filters || {};
+    setQuery(item.query || '');
+    setSelectedCourts((f.court ?? []).map(c => (c === 'SC' ? 'Supreme Court' : c)));
+    setSelectedCaseTypes((f.case_type ?? []).map(t => t.charAt(0).toUpperCase() + t.slice(1)));
+    setSelectedVerdicts(
+      (f.verdict ?? []).map(v => v.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')),
+    );
+    setActsCited((f.acts_cited ?? []).join(', '));
+    setSectionsCited((f.sections_cited ?? []).join(', '));
+    setYearFrom(f.year_from != null ? String(f.year_from) : '');
+    setYearTo(f.year_to != null ? String(f.year_to) : '');
+    runSearch(item.query || '', f);
   };
 
   const toggleFilter = (list: string[], setList: (v: string[]) => void, value: string) => {
@@ -210,12 +236,7 @@ export default function LegalSearchApp() {
               {searchHistory.map((item, index) => (
                 <button
                   key={index}
-                  onClick={() => {
-                    setQuery(item.query || '');
-                    // Force search with the history query
-                    const syntheticEvent = { preventDefault: () => {} } as React.FormEvent;
-                    handleSearch(syntheticEvent);
-                  }}
+                  onClick={() => applyHistory(item)}
                   className="w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-lg transition-all truncate"
                 >
                   <Clock className="w-3.5 h-3.5 shrink-0" />
@@ -589,14 +610,14 @@ export default function LegalSearchApp() {
                 </div>
               )}
 
-              <a 
-                href={selectedCase.pdf_url}
+              <a
+                href={readerHref(selectedCase)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold text-sm shadow-2xl shadow-slate-900/20 hover:bg-slate-800 transition-all flex items-center justify-center gap-3 group active:scale-[0.98]"
               >
-                <FileText className="w-4 h-4 group-hover:rotate-12 transition-transform" /> 
-                Open Verified Judgment
+                <FileText className="w-4 h-4 group-hover:rotate-12 transition-transform" />
+                Open in Reader
               </a>
             </div>
           </>
