@@ -3,7 +3,7 @@
 // Right-hand panel: all the extracted metadata for the open case, available
 // alongside the PDF. Pure presentational from CaseDetail.
 
-import { FileText, Scale, Users, Gavel, Link2 } from 'lucide-react';
+import { FileText, Scale, Users, Gavel, Link2, ExternalLink } from 'lucide-react';
 import type { CaseDetail } from '@/lib/reader/types';
 
 function parseVerdict(verdict?: string | null): string[] {
@@ -89,11 +89,32 @@ export default function MetadataPanel({ caseDetail }: { caseDetail: CaseDetail }
         {caseDetail.cites.length > 0 && (
           <Section title="Precedents cited" icon={<Link2 className="h-3.5 w-3.5" />}>
             <div className="space-y-1.5">
-              {caseDetail.cites.map((c, i) => (
-                <div key={`${c.cited_canonical_key ?? 'cite'}-${i}`} className="rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2 text-[11px] font-semibold text-slate-600">
-                  {c.cited_canonical_key ?? 'Unknown citation'}
-                </div>
-              ))}
+              {caseDetail.cites.map((c, i) =>
+                c.cited_case_id ? (
+                  <a
+                    key={`${c.cited_case_id}-${i}`}
+                    href={`/reader/${encodeURIComponent(c.cited_case_id)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={c.openable ? (c.cited_canonical_key ?? undefined) : 'In our dataset — not loaded in this demo'}
+                    className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-[11px] font-semibold transition-colors ${
+                      c.openable
+                        ? 'border-blue-100 bg-blue-50/60 text-blue-700 hover:bg-blue-100'
+                        : 'border-dashed border-blue-200 bg-white text-blue-600/80 hover:bg-blue-50'
+                    }`}
+                  >
+                    <span className="truncate">{c.cited_case_name || c.cited_canonical_key}</span>
+                    <ExternalLink className="h-3 w-3 shrink-0 text-blue-400" />
+                  </a>
+                ) : (
+                  <div
+                    key={`cite-${i}`}
+                    className="rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2 text-[11px] font-semibold text-slate-600"
+                  >
+                    {c.cited_canonical_key ?? 'Unknown citation'}
+                  </div>
+                ),
+              )}
             </div>
           </Section>
         )}

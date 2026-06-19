@@ -2,13 +2,14 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Filter, BookOpen, Scale, Clock, ChevronRight, FileText, ExternalLink, Info, LogOut, User, Sparkles, TrendingUp, History, Gavel, AlertCircle } from 'lucide-react';
+import { Search, Filter, BookOpen, Scale, Clock, ChevronRight, FileText, Info, LogOut, User, Sparkles, TrendingUp, History, Gavel, AlertCircle, FolderPlus } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { createClient } from '@/utils/supabase/client';
 import { logout } from './auth/actions';
 import { SearchResponse, CaseResult, MatchedChunk } from '@/types/legal';
 import { ROLE_COLORS, ROLE_DISPLAY_NAMES } from '@/lib/reader/roles';
+import GroupPicker from '@/components/groups/GroupPicker';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -60,6 +61,7 @@ export default function LegalSearchApp() {
   const [query, setQuery] = useState('');
   const [searchResponse, setSearchResponse] = useState<SearchResponse | null>(null);
   const [selectedCase, setSelectedCase] = useState<CaseResult | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [searchHistory, setSearchHistory] = useState<HistoryItem[]>([]);
@@ -534,18 +536,27 @@ export default function LegalSearchApp() {
               <h3 className="font-extrabold text-slate-900 flex items-center gap-2">
                 <BookOpen className="w-4 h-4 text-blue-600" /> Analysis
               </h3>
-              <div className="flex gap-2">
-                <a 
-                  href={selectedCase.pdf_url} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="p-2 hover:bg-slate-50 rounded-lg transition-colors border border-slate-100"
-                >
-                  <ExternalLink className="w-4 h-4 text-slate-400" />
-                </a>
-              </div>
             </div>
-            
+
+            <div className="flex gap-2 px-8 pt-5">
+              <a
+                href={readerHref(selectedCase)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 py-2.5 bg-slate-900 text-white rounded-xl font-bold text-xs hover:bg-slate-800 transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                Open in Reader
+              </a>
+              <button
+                onClick={() => setPickerOpen(true)}
+                className="flex-1 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-xl font-bold text-xs hover:bg-slate-50 transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
+              >
+                <FolderPlus className="w-3.5 h-3.5" />
+                Add to group
+              </button>
+            </div>
+
             <div className="flex-1 overflow-y-auto px-8 py-10 space-y-10">
               <div className="space-y-4">
                 <div className="space-y-1">
@@ -610,15 +621,13 @@ export default function LegalSearchApp() {
                 </div>
               )}
 
-              <a
-                href={readerHref(selectedCase)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold text-sm shadow-2xl shadow-slate-900/20 hover:bg-slate-800 transition-all flex items-center justify-center gap-3 group active:scale-[0.98]"
-              >
-                <FileText className="w-4 h-4 group-hover:rotate-12 transition-transform" />
-                Open in Reader
-              </a>
+              {pickerOpen && (
+                <GroupPicker
+                  caseId={selectedCase.case_id}
+                  caseName={selectedCase.case_name}
+                  onClose={() => setPickerOpen(false)}
+                />
+              )}
             </div>
           </>
         ) : (

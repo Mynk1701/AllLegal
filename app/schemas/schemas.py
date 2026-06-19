@@ -96,6 +96,9 @@ class CaseCitation(BaseModel):
     cited_canonical_key: Optional[str] = None
     relationship: Optional[str] = None
     chunk_id: Optional[str] = None
+    cited_case_id: Optional[str] = Field(None, description="Set if the cited case is in our dataset (clickable)")
+    cited_case_name: Optional[str] = None
+    openable: bool = Field(False, description="True if the cited case is actually uploaded (PDF loads); else demo link")
 
 
 class CaseDetail(BaseModel):
@@ -114,6 +117,75 @@ class CaseDetail(BaseModel):
     pdf_url: Optional[str] = None
     chunks: List[MatchedChunk] = Field(default_factory=list)
     cites: List[CaseCitation] = Field(default_factory=list)
+
+
+# ==================== Groups & Annotations (PDF reader, Phase 2) ====================
+# A "group" is a user's collection of cases. Annotations are group-scoped and
+# stored ONE ROW PER GESTURE: a single highlight/underline/note whose `rects`
+# array carries every PDF-native rectangle it covers (a wrapped highlight = many
+# rects). Coordinates match chunk_bboxes: { "page": <1-based>, "rect": [x0,y0,x1,y1] }.
+
+class GroupCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+
+
+class GroupUpdate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+
+
+class Group(BaseModel):
+    id: str
+    name: str
+    item_count: int = Field(0, description="Number of cases in the group")
+    has_case: bool = Field(False, description="True if a queried case_id is already in this group")
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class GroupItem(BaseModel):
+    id: str
+    group_id: str
+    case_id: str
+    created_at: Optional[datetime] = None
+
+
+class GroupDetail(Group):
+    items: List[GroupItem] = Field(default_factory=list)
+
+
+class AddCaseRequest(BaseModel):
+    case_id: str = Field(..., min_length=1)
+
+
+class AnnotationRect(BaseModel):
+    """One PDF-native rectangle on one page (bottom-left origin, y-up)."""
+    page: int = Field(..., ge=1, description="1-based PDF page")
+    rect: List[float] = Field(..., min_length=4, max_length=4, description="[x0,y0,x1,y1]")
+
+
+class AnnotationCreate(BaseModel):
+    case_id: str = Field(..., min_length=1)
+    type: str = Field(..., pattern="^(highlight|underline|note)$")
+    rects: List[AnnotationRect] = Field(..., min_length=1)
+    color: Optional[str] = Field(None, description="Hex, e.g. #FFD54A")
+    comment: Optional[str] = None
+
+
+class AnnotationUpdate(BaseModel):
+    color: Optional[str] = None
+    comment: Optional[str] = None
+
+
+class Annotation(BaseModel):
+    id: str
+    group_id: str
+    case_id: str
+    type: str
+    rects: List[AnnotationRect] = Field(default_factory=list)
+    color: Optional[str] = None
+    comment: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 # ==================== Authentication Schemas ====================

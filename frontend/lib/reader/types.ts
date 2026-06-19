@@ -24,6 +24,9 @@ export interface CaseCitation {
   cited_canonical_key?: string | null;
   relationship?: string | null;
   chunk_id?: string | null;
+  cited_case_id?: string | null; // set when the cited case is in our dataset (clickable)
+  cited_case_name?: string | null;
+  openable?: boolean; // true if actually uploaded (PDF loads); false = demo link
 }
 
 export interface CaseDetail {

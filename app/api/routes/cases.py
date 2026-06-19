@@ -4,17 +4,25 @@ Case detail route.
   GET /api/cases/{case_id}  full case record for the reader view: metadata,
   signed PDF URL, every chunk (with bbox/page_range), and outbound citations.
 """
+import hashlib
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.security import get_current_user
 from app.schemas.schemas import CaseCitation, CaseDetail, MatchedChunk
+from app.services import case_index
 from app.services.opensearch_service import opensearch_service
 from app.services.supabase import supabase_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _derive_case_id(canonical_key: str) -> str:
+    """case_id = sha256(normalized canonical key)[:10] — mirrors the pipeline's
+    derive_case_id, so a cited_canonical_key resolves to the cited case's id."""
+    return hashlib.sha256(" ".join(canonical_key.split()).lower().encode("utf-8")).hexdigest()[:10]
 
 
 @router.get("/cases/{case_id}", response_model=CaseDetail)
@@ -47,7 +55,37 @@ def get_case(case_id: str, current_user: dict = Depends(get_current_user)) -> Ca
     ]
 
     date_decided = row.get("date_decided") or src0.get("date_decided")
-    cites = [CaseCitation(**c) for c in supabase_service.get_citations(case_id)]
+
+    # Resolve cited precedents that are in our corpus: a cited_canonical_key hashes
+    # to the cited case's case_id (see _derive_case_id). Batch-check existence so
+    # the reader can open the ones we have and show their names.
+    raw_cites = supabase_service.get_citations(case_id)
+    cand_ids = {
+        _derive_case_id(c["cited_canonical_key"]): None
+        for c in raw_cites
+        if c.get("cited_canonical_key")
+    }
+    resolved = supabase_service.get_cases_by_ids(list(cand_ids)) if cand_ids else {}
+    cites = []
+    for c in raw_cites:
+        key = c.get("cited_canonical_key")
+        rid = _derive_case_id(key) if key else None
+        hit = resolved.get(rid) if rid else None  # uploaded -> openable for real
+        # Clickable if the cited case is in our dataset and isn't a self-reference:
+        #   - in the uploaded 250 (hit)         -> openable, PDF loads
+        #   - in the full 26k index (case_index) -> demo link (not loaded yet)
+        in_dataset = rid is not None and rid != case_id and (hit is not None or case_index.known(rid))
+        name = ((hit.get("case_name") if hit else None) or case_index.name_of(rid)) if in_dataset else None
+        cites.append(
+            CaseCitation(
+                cited_canonical_key=key,
+                relationship=c.get("relationship"),
+                chunk_id=c.get("chunk_id"),
+                cited_case_id=rid if in_dataset else None,
+                cited_case_name=name,
+                openable=bool(hit) and rid != case_id,
+            )
+        )
 
     return CaseDetail(
         case_id=case_id,

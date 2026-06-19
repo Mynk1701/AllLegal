@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { pdfjsLib, type PDFDocumentProxy } from '@/lib/pdf/pdfjs';
 import type { HoverInfo, PageChunk, ReaderChunk } from '@/lib/reader/types';
+import type { Annotation, AnnotationDraft } from '@/lib/groups/types';
 import PdfPage from './PdfPage';
 
 interface Props {
@@ -17,9 +18,26 @@ interface Props {
   scale: number;
   onHover: (info: HoverInfo | null) => void;
   hoveredChunkId: string | null;
+  annotations: Annotation[];
+  annotateEnabled: boolean;
+  showHighlights: boolean;
+  onCreateAnnotation: (draft: AnnotationDraft) => void;
+  onDeleteAnnotation: (id: string) => void;
 }
 
-export default function PdfDocument({ pdfUrl, chunks, activeChunkId, scale, onHover, hoveredChunkId }: Props) {
+export default function PdfDocument({
+  pdfUrl,
+  chunks,
+  activeChunkId,
+  scale,
+  onHover,
+  hoveredChunkId,
+  annotations,
+  annotateEnabled,
+  showHighlights,
+  onCreateAnnotation,
+  onDeleteAnnotation,
+}: Props) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [estimate, setEstimate] = useState<{ w: number; h: number }>({ w: 612, h: 792 });
@@ -79,6 +97,18 @@ export default function PdfDocument({ pdfUrl, chunks, activeChunkId, scale, onHo
     return map;
   }, [chunks]);
 
+  // An annotation appears on every page its rects touch (multi-page is rare).
+  const annotationsByPage = useMemo(() => {
+    const map = new Map<number, Annotation[]>();
+    for (const a of annotations) {
+      for (const page of new Set(a.rects.map((r) => r.page))) {
+        if (!map.has(page)) map.set(page, []);
+        map.get(page)!.push(a);
+      }
+    }
+    return map;
+  }, [annotations]);
+
   const registerEl = useCallback((pageNumber: number, el: HTMLDivElement | null) => {
     if (el) pageEls.current.set(pageNumber, el);
     else pageEls.current.delete(pageNumber);
@@ -126,6 +156,11 @@ export default function PdfDocument({ pdfUrl, chunks, activeChunkId, scale, onHo
           hoveredChunkId={hoveredChunkId}
           onHover={onHover}
           registerEl={registerEl}
+          pageAnnotations={annotationsByPage.get(n) ?? []}
+          annotateEnabled={annotateEnabled}
+          showHighlights={showHighlights}
+          onCreateAnnotation={onCreateAnnotation}
+          onDeleteAnnotation={onDeleteAnnotation}
         />
       ))}
     </div>

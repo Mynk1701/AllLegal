@@ -274,5 +274,176 @@ class SupabaseService:
             logger.error(f"❌ Error logging search: {str(e)}")
             return False
 
+    # ==================== Groups & Annotations (PDF reader) ====================
+    # The service-role client bypasses RLS, so EVERY method here is scoped by the
+    # caller's user_id (groups/annotations) or by a parent group the caller owns
+    # (items/annotations). Routes verify group ownership before touching children.
+
+    def create_group(self, user_id: str, name: str) -> Optional[Dict]:
+        try:
+            resp = self.admin.table("groups").insert(
+                {"user_id": user_id, "name": name}
+            ).execute()
+            return resp.data[0] if resp.data else None
+        except Exception as e:
+            logger.error(f"❌ create_group failed: {str(e)}")
+            return None
+
+    def list_groups(self, user_id: str, case_id: Optional[str] = None) -> List[Dict]:
+        """User's groups, newest first, with item_count. When case_id is given,
+        also flags `has_case` for groups that already contain that case."""
+        try:
+            resp = (
+                self.admin.table("groups").select("*")
+                .eq("user_id", user_id).order("created_at", desc=True).execute()
+            )
+            groups = resp.data or []
+            if not groups:
+                return []
+            ids = [g["id"] for g in groups]
+            items = self.admin.table("group_items").select("group_id").in_("group_id", ids).execute()
+            counts: Dict[str, int] = {}
+            for it in (items.data or []):
+                counts[it["group_id"]] = counts.get(it["group_id"], 0) + 1
+            members: set = set()
+            if case_id:
+                m = (
+                    self.admin.table("group_items").select("group_id")
+                    .in_("group_id", ids).eq("case_id", case_id).execute()
+                )
+                members = {r["group_id"] for r in (m.data or [])}
+            for g in groups:
+                g["item_count"] = counts.get(g["id"], 0)
+                g["has_case"] = g["id"] in members
+            return groups
+        except Exception as e:
+            logger.error(f"❌ list_groups failed: {str(e)}")
+            return []
+
+    def get_group(self, user_id: str, group_id: str) -> Optional[Dict]:
+        """Fetch a group only if owned by user_id (ownership gate)."""
+        try:
+            resp = (
+                self.admin.table("groups").select("*")
+                .eq("id", group_id).eq("user_id", user_id).execute()
+            )
+            return resp.data[0] if resp.data else None
+        except Exception as e:
+            logger.error(f"❌ get_group failed: {str(e)}")
+            return None
+
+    def update_group(self, user_id: str, group_id: str, name: str) -> Optional[Dict]:
+        try:
+            resp = (
+                self.admin.table("groups")
+                .update({"name": name, "updated_at": datetime.utcnow().isoformat()})
+                .eq("id", group_id).eq("user_id", user_id).execute()
+            )
+            return resp.data[0] if resp.data else None
+        except Exception as e:
+            logger.error(f"❌ update_group failed: {str(e)}")
+            return None
+
+    def delete_group(self, user_id: str, group_id: str) -> bool:
+        """Delete a group; items + annotations cascade via FK."""
+        try:
+            resp = (
+                self.admin.table("groups").delete()
+                .eq("id", group_id).eq("user_id", user_id).execute()
+            )
+            return bool(resp.data)
+        except Exception as e:
+            logger.error(f"❌ delete_group failed: {str(e)}")
+            return False
+
+    def list_group_items(self, group_id: str) -> List[Dict]:
+        try:
+            resp = (
+                self.admin.table("group_items").select("*")
+                .eq("group_id", group_id).order("created_at", desc=True).execute()
+            )
+            return resp.data or []
+        except Exception as e:
+            logger.error(f"❌ list_group_items failed: {str(e)}")
+            return []
+
+    def add_group_item(self, group_id: str, case_id: str) -> Optional[Dict]:
+        """Idempotent: returns the existing row if the case is already in the group."""
+        try:
+            existing = (
+                self.admin.table("group_items").select("*")
+                .eq("group_id", group_id).eq("case_id", case_id).execute()
+            )
+            if existing.data:
+                return existing.data[0]
+            resp = self.admin.table("group_items").insert(
+                {"group_id": group_id, "case_id": case_id}
+            ).execute()
+            return resp.data[0] if resp.data else None
+        except Exception as e:
+            logger.error(f"❌ add_group_item failed: {str(e)}")
+            return None
+
+    def remove_group_item(self, group_id: str, case_id: str) -> bool:
+        try:
+            resp = (
+                self.admin.table("group_items").delete()
+                .eq("group_id", group_id).eq("case_id", case_id).execute()
+            )
+            return bool(resp.data)
+        except Exception as e:
+            logger.error(f"❌ remove_group_item failed: {str(e)}")
+            return False
+
+    def list_annotations(self, group_id: str, case_id: str) -> List[Dict]:
+        try:
+            resp = (
+                self.admin.table("annotations").select("*")
+                .eq("group_id", group_id).eq("case_id", case_id)
+                .order("created_at", desc=False).execute()
+            )
+            return resp.data or []
+        except Exception as e:
+            logger.error(f"❌ list_annotations failed: {str(e)}")
+            return []
+
+    def create_annotation(self, user_id: str, group_id: str, payload: Dict[str, Any]) -> Optional[Dict]:
+        """payload: {case_id, type, rects:[{page,rect}], color?, comment?}."""
+        try:
+            row = {"user_id": user_id, "group_id": group_id, **payload}
+            resp = self.admin.table("annotations").insert(row).execute()
+            return resp.data[0] if resp.data else None
+        except Exception as e:
+            logger.error(f"❌ create_annotation failed: {str(e)}")
+            return None
+
+    def update_annotation(
+        self, user_id: str, group_id: str, annotation_id: str, fields: Dict[str, Any]
+    ) -> Optional[Dict]:
+        try:
+            fields = {**fields, "updated_at": datetime.utcnow().isoformat()}
+            resp = (
+                self.admin.table("annotations").update(fields)
+                .eq("id", annotation_id).eq("group_id", group_id).eq("user_id", user_id)
+                .execute()
+            )
+            return resp.data[0] if resp.data else None
+        except Exception as e:
+            logger.error(f"❌ update_annotation failed: {str(e)}")
+            return None
+
+    def delete_annotation(self, user_id: str, group_id: str, annotation_id: str) -> bool:
+        try:
+            resp = (
+                self.admin.table("annotations").delete()
+                .eq("id", annotation_id).eq("group_id", group_id).eq("user_id", user_id)
+                .execute()
+            )
+            return bool(resp.data)
+        except Exception as e:
+            logger.error(f"❌ delete_annotation failed: {str(e)}")
+            return False
+
+
 # Global Supabase service instance
 supabase_service = SupabaseService()

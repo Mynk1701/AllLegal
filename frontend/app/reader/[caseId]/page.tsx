@@ -60,9 +60,19 @@ export default function ReaderPage() {
   }, [caseId]);
 
   if (error) {
+    const notLoaded = /\(404\)/.test(error);
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-slate-100 p-10 text-center">
-        <p className="text-sm font-semibold text-rose-600">{error}</p>
+        {notLoaded ? (
+          <div className="max-w-xs space-y-2">
+            <p className="text-sm font-bold text-slate-700">Not loaded in this demo</p>
+            <p className="text-xs font-medium text-slate-400">
+              This judgment is in our dataset, but only a subset of cases has been uploaded so far.
+            </p>
+          </div>
+        ) : (
+          <p className="text-sm font-semibold text-rose-600">{error}</p>
+        )}
       </div>
     );
   }

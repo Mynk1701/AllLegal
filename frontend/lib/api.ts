@@ -4,6 +4,13 @@
 
 import { createClient } from '@/utils/supabase/client';
 import type { CaseDetail } from '@/lib/reader/types';
+import type {
+  Annotation,
+  AnnotationCreateBody,
+  Group,
+  GroupDetail,
+  GroupItem,
+} from '@/lib/groups/types';
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
@@ -27,3 +34,63 @@ export async function getCaseDetail(caseId: string): Promise<CaseDetail> {
   }
   return res.json();
 }
+
+// ==================== Groups & annotations ====================
+// Thin typed wrappers over the backend group routes (see app/api/routes/groups.py).
+
+/** authedFetch + JSON, throwing on non-2xx. Pass expectEmpty for 204 routes. */
+async function authedJson<T>(path: string, init: RequestInit = {}, expectEmpty = false): Promise<T> {
+  const res = await authedFetch(path, init);
+  if (!res.ok) {
+    throw new Error(`${init.method ?? 'GET'} ${path} failed (${res.status})`);
+  }
+  return (expectEmpty ? (undefined as T) : await res.json());
+}
+
+const jsonInit = (method: string, body?: unknown): RequestInit => ({
+  method,
+  headers: { 'Content-Type': 'application/json' },
+  body: body === undefined ? undefined : JSON.stringify(body),
+});
+
+const g = (id: string) => `/api/groups/${encodeURIComponent(id)}`;
+
+export const listGroups = (caseId?: string): Promise<Group[]> =>
+  authedJson(`/api/groups${caseId ? `?case_id=${encodeURIComponent(caseId)}` : ''}`);
+
+export const createGroup = (name: string): Promise<Group> =>
+  authedJson('/api/groups', jsonInit('POST', { name }));
+
+export const getGroup = (groupId: string): Promise<GroupDetail> => authedJson(g(groupId));
+
+export const renameGroup = (groupId: string, name: string): Promise<Group> =>
+  authedJson(g(groupId), jsonInit('PATCH', { name }));
+
+export const deleteGroup = (groupId: string): Promise<void> =>
+  authedJson(g(groupId), jsonInit('DELETE'), true);
+
+export const addCaseToGroup = (groupId: string, caseId: string): Promise<GroupItem> =>
+  authedJson(`${g(groupId)}/items`, jsonInit('POST', { case_id: caseId }));
+
+export const removeCaseFromGroup = (groupId: string, caseId: string): Promise<void> =>
+  authedJson(`${g(groupId)}/items/${encodeURIComponent(caseId)}`, jsonInit('DELETE'), true);
+
+export const listAnnotations = (groupId: string, caseId: string): Promise<Annotation[]> =>
+  authedJson(`${g(groupId)}/annotations?case_id=${encodeURIComponent(caseId)}`);
+
+export const createAnnotation = (groupId: string, body: AnnotationCreateBody): Promise<Annotation> =>
+  authedJson(`${g(groupId)}/annotations`, jsonInit('POST', body));
+
+export const updateAnnotation = (
+  groupId: string,
+  annotationId: string,
+  patch: { color?: string; comment?: string },
+): Promise<Annotation> =>
+  authedJson(`${g(groupId)}/annotations/${encodeURIComponent(annotationId)}`, jsonInit('PATCH', patch));
+
+export const deleteAnnotation = (groupId: string, annotationId: string): Promise<void> =>
+  authedJson(
+    `${g(groupId)}/annotations/${encodeURIComponent(annotationId)}`,
+    jsonInit('DELETE'),
+    true,
+  );
