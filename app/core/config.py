@@ -15,9 +15,6 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     
-    # Database (PostgreSQL with Supabase)
-    DATABASE_URL: str = "postgresql://postgres:password@localhost:5432/alllegal"
-
     # OpenSearch Configuration (chunk-level index `case_chunks`)
     OPENSEARCH_HOST: str = "localhost"
     OPENSEARCH_PORT: int = 9200
@@ -34,7 +31,9 @@ class Settings(BaseSettings):
     VOYAGE_MODEL: str = "voyage-law-2"
 
     # kNN / faceting knobs
-    KNN_K: int = 200            # semantic neighbours pulled per search (pre-grouping)
+    KNN_K: int = 200            # suppressed_matches() scan depth only — NOT the main /search
+                                # candidate pool, which is now sized exactly per-request (see
+                                # opensearch_service.search(), KNN_K_CEILING)
     FACET_POOL_K: int = 500     # candidate pool size that query-aware facets aggregate over
     FACET_TERMS_SIZE: int = 50  # max distinct values returned per facet
 
@@ -45,8 +44,16 @@ class Settings(BaseSettings):
     PDF_SIGNED_URL_EXPIRY: int = 3600       # seconds
 
     # Result shaping
-    MAX_CHUNKS_PER_CASE: int = 3            # top matching chunks shown per case
-    CHUNK_FETCH_FACTOR: int = 8             # over-fetch chunks so grouping yields enough cases
+    MAX_CHUNKS_PER_CASE: int = 3            # top matching chunks shown per case (collapse inner_hits size)
+    # kNN candidate pool (k) for /search is sized to the EXACT count of chunks
+    # matching the active filters (a cheap _count call, ~20-50ms) — not
+    # guessed via a multiplier. That makes k cover every real candidate
+    # whenever the filtered set fits under this ceiling, so OpenSearch's
+    # `collapse` can surface every distinct case with no shortfall (verified
+    # through page 5 of a 50-case corpus). Only falls back to an approximate
+    # top-k once the matching set exceeds the ceiling — a deliberately huge,
+    # unfiltered, full-corpus query. See opensearch_service.search().
+    KNN_K_CEILING: int = 5000
 
     # Redis Configuration
     REDIS_URL: str = "redis://localhost:6379/0"

@@ -17,12 +17,8 @@ from typing import List, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.security import get_current_user
-from app.db.database import get_db
-from app.db.models import SearchLog
 from app.schemas.schemas import (
     CaseResult,
     Facets,
@@ -42,49 +38,52 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Connect to the data pipeline's StatuteIndex (statute-citation normalization).
-# It lives in the parent pipeline repo at <root>/src/scripts, NOT inside AllLegal.
-# parents[4] = repo root (search.py: routes→api→app→AllLegal→root). This matches
-# the parent-repo assumption already used by scripts/upload_pdfs_to_supabase.py.
-# NOTE: if AllLegal is ever deployed standalone (without the parent repo present),
-# vendor statute_index.py + annotatedCentralActs/ in and repoint this path.
-STATUTE_INDEX_PATH = Path(__file__).resolve().parents[4] / "src" / "scripts"
+# It lives in the `legal-engine` git submodule, checked out at AllLegal/legal-engine
+# (see .gitmodules) — NOT in a separate sibling "parent pipeline repo" as an
+# earlier version of this comment assumed (verified wrong: parents[4] resolved
+# to AllLegal's PARENT directory, where statute_index.py doesn't exist — silently
+# left `statute_index = None` this whole time, in this checkout).
+# parents[3] = AllLegal (search.py: routes→api→app→AllLegal).
+STATUTE_INDEX_PATH = Path(__file__).resolve().parents[3] / "legal-engine" / "src" / "scripts"
 if str(STATUTE_INDEX_PATH) not in sys.path:
     sys.path.insert(0, str(STATUTE_INDEX_PATH))
 
 try:
-    from statute_index import StatuteIndex
+    from statute_index import StatuteIndex, IPC_TO_BNS, CRPC_TO_BNSS
     statute_index = StatuteIndex()
+    # Reverse maps for facet labels: canonical BNS/BNSS tag -> legacy IPC/CrPC
+    # number, so lawyers who still think in pre-2023 section numbers recognize
+    # the option (e.g. "BNS s.103 (formerly IPC 302)").
+    _BNS_TO_IPC = {v: k for k, v in IPC_TO_BNS.items()}
+    _BNSS_TO_CRPC = {v: k for k, v in CRPC_TO_BNSS.items()}
     logger.info(f"✅ StatuteIndex loaded ({len(statute_index)} entries) from {STATUTE_INDEX_PATH}")
 except Exception as e:
     # Broad except (not just ImportError): a missing dataset dir or any init
     # error must degrade to "normalization off", never crash app startup.
     logger.warning(f"⚠️ StatuteIndex unavailable — section normalization disabled: {e}")
     statute_index = None
+    _BNS_TO_IPC = {}
+    _BNSS_TO_CRPC = {}
 
 # ----------------------------------------------------------------- normalization
-COURT_MAP = {
-    "Supreme Court": "SC",
-    "Delhi High Court": "DHC",
-    "Bombay High Court": "BHC",
-}
-
+# All five filterable fields are now facet-driven pickers, so the frontend
+# already sends back exact canonical index values round-tripped from
+# GET /api/facets. This normalization step stays as a safety net for any
+# caller that bypasses the picker — a human (or API client) typing
+# "Negotiable Instruments Act" or "302 IPC" still resolves to "NI" /
+# "BNS s.103". A lookup on an already-canonical value is a no-op (resolves
+# to itself), so it's safe to run unconditionally on checkbox-sourced input.
 def _normalize_filters(filters: dict) -> dict:
-    """Standardize UI values to match OpenSearch index keys."""
+    """Standardize free-text filter input to match OpenSearch index keys."""
     norm = filters.copy()
-    
-    # Map "Supreme Court" -> "SC" (Standard Pipeline Code)
-    if "court" in norm and norm["court"]:
-        # Standardizing to what stage_05_index.py uses
-        norm["court"] = ["SC" if c == "Supreme Court" else c for c in norm["court"]]
-    
-    # Normalize Verdicts: "Partly Allowed" -> "partly_allowed"
-    if "verdict" in norm and norm["verdict"]:
-        norm["verdict"] = [v.lower().replace(" ", "_") for v in norm["verdict"]]
 
-    # Normalize Case Type: "Criminal" -> "criminal"
-    if "case_type" in norm and norm["case_type"]:
-        norm["case_type"] = [t.lower() for t in norm["case_type"]]
-    
+    if statute_index and "acts_cited" in norm and norm["acts_cited"]:
+        standardized = []
+        for a in norm["acts_cited"]:
+            res = statute_index.lookup(a)
+            standardized.append(res["act"] if res else a)
+        norm["acts_cited"] = standardized
+
     # Standardize "302 IPC" -> "BNS s.103"
     if statute_index and "sections_cited" in norm and norm["sections_cited"]:
         standardized = []
@@ -92,8 +91,36 @@ def _normalize_filters(filters: dict) -> dict:
             res = statute_index.lookup(s)
             standardized.append(res["canonical"] if res else s)
         norm["sections_cited"] = standardized
-        
+
     return norm
+
+
+# Acts/sections facets carry the bare canonical index values ("IPC", "BNS
+# s.103") — fine for filtering, useless for a lawyer scanning checkboxes.
+# Label them with the act's full name and, for sections that replaced an
+# IPC/CrPC provision, the legacy number too.
+def _act_label(code: str) -> str:
+    if not statute_index:
+        return code
+    entry = statute_index.get_act_inventory_entry(code)
+    return entry["display_name"] if entry and entry.get("display_name") else code
+
+
+def _section_label(canonical: str) -> str:
+    if canonical in _BNS_TO_IPC:
+        return f"{canonical} (formerly IPC {_BNS_TO_IPC[canonical]})"
+    if canonical in _BNSS_TO_CRPC:
+        return f"{canonical} (formerly CrPC {_BNSS_TO_CRPC[canonical]})"
+    return canonical
+
+
+def _attach_facet_labels(facets: Facets) -> Facets:
+    for fv in facets.acts_cited:
+        fv.label = _act_label(str(fv.value))
+    for fv in facets.sections_cited:
+        fv.label = _section_label(str(fv.value))
+    return facets
+
 
 # ----------------------------------------------------------------- helpers
 def _collect_filters(court, case_type, verdict, acts_cited, sections_cited,
@@ -107,29 +134,30 @@ def _collect_filters(court, case_type, verdict, acts_cited, sections_cited,
     return {k: v for k, v in raw.items() if v}
 
 
-def _group_by_case(hits: list, max_chunks: int) -> list:
-    """Collapse chunk hits into cases, preserving rank order; keep top-N chunks/case."""
-    order: list = []
-    by_case: dict = {}
+def _hits_to_case_groups(hits: list) -> list:
+    """Adapt OpenSearch's collapsed hits (one per case_id, top chunks carried
+    in `inner_hits.top_chunks` — see opensearch_service.search()) into the
+    shape _build_case_result expects. OpenSearch already did the chunk->case
+    dedup and per-case chunk cap, so this is just a reshape, not a grouping."""
+    groups = []
     for h in hits:
         src = h.get("_source", {})
         cid = src.get("case_id")
         if cid is None:
             continue
-        score = h.get("_score")
-        if cid not in by_case:
-            by_case[cid] = {"case_id": cid, "score": score, "src": src, "chunks": []}
-            order.append(cid)
-        entry = by_case[cid]
-        if len(entry["chunks"]) < max_chunks:
-            entry["chunks"].append({
-                "chunk_id": src.get("chunk_id"),
-                "chunk_type": src.get("chunk_type"),
-                "chunk_text": src.get("chunk_text"),
-                "chunk_sequence": src.get("chunk_sequence"),
-                "score": score,
-            })
-    return [by_case[c] for c in order]
+        inner = h.get("inner_hits", {}).get("top_chunks", {}).get("hits", {}).get("hits", [])
+        chunks = [
+            {
+                "chunk_id": c["_source"].get("chunk_id"),
+                "chunk_type": c["_source"].get("chunk_type"),
+                "chunk_text": c["_source"].get("chunk_text"),
+                "chunk_sequence": c["_source"].get("chunk_sequence"),
+                "score": c.get("_score"),
+            }
+            for c in inner
+        ]
+        groups.append({"case_id": cid, "score": h.get("_score"), "src": src, "chunks": chunks})
+    return groups
 
 
 def _year_of(date_decided) -> Optional[int]:
@@ -189,7 +217,6 @@ def search(
     year_to: Optional[int] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100),
-    db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ) -> SearchResponse:
     start = time.time()
@@ -212,57 +239,56 @@ def search(
         logger.error(f"❌ query embedding failed: {e}", exc_info=True)
         query_vector = None
 
-    # Over-fetch chunks so grouping yields enough distinct cases for this page.
-    needed = page * limit
-    fetch_size = settings.KNN_K if query_vector is not None else max(
-        settings.KNN_K, needed * settings.CHUNK_FETCH_FACTOR
-    )
-
     try:
-        hits = opensearch_service.search(query_vector=query_vector, filters=filters, size=fetch_size)
-        logger.info(f"📡 OpenSearch returned {len(hits)} hits")
+        # OpenSearch collapses chunk hits onto distinct case_ids itself (see
+        # opensearch_service.search()) and paginates the collapsed result set
+        # directly — `case_groups` below is already exactly this page, no
+        # client-side slicing needed.
+        hits, total_distinct_cases = opensearch_service.search(
+            query_vector=query_vector, filters=filters, page=page, limit=limit
+        )
+        logger.info(f"📡 OpenSearch returned {len(hits)} cases (of {total_distinct_cases} matching)")
     except Exception as e:
         logger.error(f"❌ OpenSearch search failed: {e}", exc_info=True)
         raise HTTPException(status_code=502, detail="Search backend unavailable")
 
-    grouped = _group_by_case(hits, settings.MAX_CHUNKS_PER_CASE)
-    page_slice = grouped[(page - 1) * limit: page * limit]
+    case_groups = _hits_to_case_groups(hits)
 
-    case_ids = [g["case_id"] for g in page_slice]
-    chunk_ids = [c["chunk_id"] for g in page_slice for c in g["chunks"] if c["chunk_id"]]
+    case_ids = [g["case_id"] for g in case_groups]
+    chunk_ids = [c["chunk_id"] for g in case_groups for c in g["chunks"] if c["chunk_id"]]
     cases = supabase_service.get_cases_by_ids(case_ids)
     bboxes = supabase_service.get_chunk_bboxes_by_ids(chunk_ids)
 
-    results = [_build_case_result(g, cases.get(g["case_id"]), bboxes) for g in page_slice]
+    results = [_build_case_result(g, cases.get(g["case_id"]), bboxes) for g in case_groups]
 
     suppressed_raw = opensearch_service.suppressed_matches(
         query_vector=query_vector, filters=filters,
-        result_case_ids={g["case_id"] for g in grouped},
+        result_case_ids=set(case_ids),
     )
     suppressed = [SuppressedCase(**s) for s in suppressed_raw]
 
-    facets = Facets(**opensearch_service.facets(query_vector=query_vector, filters=filters))
+    facets = _attach_facet_labels(Facets(**opensearch_service.facets(query_vector=query_vector, filters=filters)))
 
     took_ms = (time.time() - start) * 1000.0
 
     # Log the search DEFINITION (q + filters) — this is what history replays.
-    try:
-        db.add(SearchLog(
-            search_id=str(uuid4()),
-            query=q or "",
-            results_count=len(grouped),
-            search_time_ms=took_ms,
-            filters_applied=json.dumps(filters),
-            user_id=user_id,
-        ))
-        db.commit()
-    except Exception as e:
-        logger.error(f"❌ Error logging search: {e}")
-        db.rollback()
+    supabase_service.log_search(
+        search_id=str(uuid4()),
+        query=q or "",
+        results_count=total_distinct_cases,
+        search_time_ms=took_ms,
+        filters_applied=json.dumps(filters),
+        user_id=user_id,
+    )
 
     return SearchResponse(
         query=q,
-        total_cases=len(grouped),
+        # Exact distinct-case count in both modes (cardinality agg scans every
+        # matching doc; in semantic-query mode the kNN candidate pool is sized
+        # to the exact matching-chunk count, not guessed — see
+        # opensearch_service.search()). Only degrades to an approximate top-k
+        # bound if the matching-chunk count exceeds KNN_K_CEILING.
+        total_cases=total_distinct_cases,
         took_ms=round(took_ms, 1),
         results=results,
         facets=facets,
@@ -293,37 +319,32 @@ def facets(
     except Exception as e:
         logger.warning(f"⚠️ facets embedding failed: {e}")
         query_vector = None
-    return Facets(**opensearch_service.facets(query_vector=query_vector, filters=filters))
+    return _attach_facet_labels(Facets(**opensearch_service.facets(query_vector=query_vector, filters=filters)))
 
 
 # ----------------------------------------------------------------- /history
 @router.get("/search/history", response_model=List[HistoryItem])
 def get_search_history(
     limit: int = Query(default=10, ge=1, le=50),
-    db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     """Most-recent search definitions, de-duplicated by {query, filters}."""
     user_id = current_user.get("sub")
-    rows = (
-        db.query(SearchLog)
-        .filter(SearchLog.user_id == user_id)
-        .order_by(SearchLog.created_at.desc())
-        .limit(200)
-        .all()
-    )
+    rows = supabase_service.get_search_history(user_id, limit=200)
     out: List[HistoryItem] = []
     seen: set = set()
     for log in rows:
-        key = (log.query or "", log.filters_applied or "")
+        query_val = log.get("query")
+        filters_applied = log.get("filters_applied")
+        key = (query_val or "", filters_applied or "")
         if key in seen:
             continue
         seen.add(key)
         try:
-            parsed = json.loads(log.filters_applied) if log.filters_applied else {}
+            parsed = json.loads(filters_applied) if filters_applied else {}
         except (json.JSONDecodeError, TypeError):
             parsed = {}
-        out.append(HistoryItem(query=log.query or None, filters=parsed, timestamp=log.created_at))
+        out.append(HistoryItem(query=query_val or None, filters=parsed, timestamp=log.get("created_at")))
         if len(out) >= limit:
             break
     return out

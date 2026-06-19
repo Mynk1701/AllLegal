@@ -35,7 +35,7 @@ export interface CaseDetail {
   citation?: string | null;
   court?: string | null;
   case_type?: string | null;
-  verdict?: string | null;
+  verdict: string[];
   year?: number | null;
   date_decided?: string | null;
   bench: string[];

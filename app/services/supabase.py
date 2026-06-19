@@ -7,7 +7,7 @@ from app.core.config import settings
 import logging
 from typing import Optional, Dict, Any, List
 import jwt
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -116,78 +116,6 @@ class SupabaseService:
             logger.error(f"❌ Sign in failed: {str(e)}")
             return None
     
-    # ==================== Database Operations ====================
-    
-    def insert_case(self, case_data: Dict[str, Any]) -> Optional[Dict]:
-        """
-        Insert a legal case into database.
-        
-        Args:
-            case_data: Case metadata dictionary
-                {
-                    "title": str,
-                    "court": str,
-                    "year": int,
-                    "judge": str,
-                    "summary": str,
-                    "case_number": str
-                }
-        
-        Returns:
-            Inserted case data or None if failed
-        """
-        try:
-            response = self.client.table("cases").insert(case_data).execute()
-            logger.info(f"✅ Case inserted: {case_data.get('title')}")
-            return response.data[0] if response.data else None
-        except Exception as e:
-            logger.error(f"❌ Error inserting case: {str(e)}")
-            return None
-    
-    def get_case(self, case_id: str) -> Optional[Dict]:
-        """
-        Retrieve a case by ID.
-        
-        Args:
-            case_id: Case UUID
-            
-        Returns:
-            Case data or None if not found
-        """
-        try:
-            response = self.client.table("cases").select("*").eq("id", case_id).execute()
-            case = response.data[0] if response.data else None
-            if case:
-                logger.info(f"✅ Case retrieved: {case_id}")
-            return case
-        except Exception as e:
-            logger.error(f"❌ Error retrieving case: {str(e)}")
-            return None
-    
-    def search_cases(self, query: str, limit: int = 10) -> List[Dict]:
-        """
-        Search cases by title or summary.
-        Note: Full-text search is in Meilisearch. This is basic DB search.
-        
-        Args:
-            query: Search string
-            limit: Max results
-            
-        Returns:
-            List of matching cases
-        """
-        try:
-            # Use full-text search if available, or filter by title
-            response = self.client.table("cases").select("*").ilike(
-                "title",
-                f"%{query}%"
-            ).limit(limit).execute()
-            logger.info(f"✅ Found {len(response.data)} cases matching '{query}'")
-            return response.data if response.data else []
-        except Exception as e:
-            logger.error(f"❌ Error searching cases: {str(e)}")
-            return []
-    
     # ==================== Search Enrichment (OpenSearch -> Supabase) ====================
 
     def get_cases_by_ids(self, case_ids: List[str]) -> Dict[str, Dict]:
@@ -247,32 +175,60 @@ class SupabaseService:
             logger.warning(f"⚠️ signed URL failed for {case_id}: {str(e)}")
             return None
 
-    def log_search(self, user_id: str, query: str, results_count: int, search_time_ms: float) -> bool:
+    def log_search(
+        self,
+        search_id: str,
+        query: str,
+        results_count: int,
+        search_time_ms: float,
+        filters_applied: str,
+        user_id: Optional[str],
+    ) -> bool:
         """
-        Log a search query for analytics.
-        
+        Log a search DEFINITION (query + filters) for the history feature and analytics.
+
         Args:
-            user_id: User who performed search
+            search_id: Unique id for this search (uuid4 string)
             query: Search query string
-            results_count: Number of results returned
+            results_count: Number of distinct cases returned
             search_time_ms: Search execution time
-            
+            filters_applied: JSON-encoded filter dict
+            user_id: User who performed the search (from JWT 'sub'), if any
+
         Returns:
             True if logged successfully
         """
         try:
             self.client.table("search_logs").insert({
-                "user_id": user_id,
+                "search_id": search_id,
                 "query": query,
                 "results_count": results_count,
                 "search_time_ms": search_time_ms,
-                "timestamp": datetime.utcnow().isoformat()
+                "filters_applied": filters_applied,
+                "user_id": user_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
             }).execute()
             logger.info(f"✅ Search logged: '{query}' ({results_count} results)")
             return True
         except Exception as e:
             logger.error(f"❌ Error logging search: {str(e)}")
             return False
+
+    def get_search_history(self, user_id: str, limit: int = 200) -> List[Dict]:
+        """Most-recent search_logs rows for a user, newest first (raw — caller de-dupes)."""
+        try:
+            resp = (
+                self.client.table("search_logs")
+                .select("query, filters_applied, created_at")
+                .eq("user_id", user_id)
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return resp.data or []
+        except Exception as e:
+            logger.error(f"❌ get_search_history failed: {str(e)}")
+            return []
 
     # ==================== Groups & Annotations (PDF reader) ====================
     # The service-role client bypasses RLS, so EVERY method here is scoped by the

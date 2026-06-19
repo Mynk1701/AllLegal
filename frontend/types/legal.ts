@@ -25,7 +25,7 @@ export interface CaseResult {
   citation?: string;
   court?: string;
   case_type?: string;
-  verdict?: string;
+  verdict: string[];
   year?: number;
   date_decided?: string;
   bench: string[];
@@ -40,6 +40,7 @@ export interface CaseResult {
 export interface FacetValue {
   value: any;
   count: number;
+  label?: string;
 }
 
 export interface Facets {

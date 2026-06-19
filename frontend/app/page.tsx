@@ -2,12 +2,12 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Filter, BookOpen, Scale, Clock, ChevronRight, FileText, Info, LogOut, User, Sparkles, TrendingUp, History, Gavel, AlertCircle, FolderPlus } from 'lucide-react';
+import { Search, Filter, BookOpen, Scale, Clock, ChevronRight, FileText, Info, LogOut, User, Sparkles, TrendingUp, Gavel, AlertCircle, FolderPlus } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { createClient } from '@/utils/supabase/client';
 import { logout } from './auth/actions';
-import { SearchResponse, CaseResult, MatchedChunk } from '@/types/legal';
+import { SearchResponse, CaseResult, MatchedChunk, Facets } from '@/types/legal';
 import { ROLE_COLORS, ROLE_DISPLAY_NAMES } from '@/lib/reader/roles';
 import GroupPicker from '@/components/groups/GroupPicker';
 
@@ -20,18 +20,6 @@ function cn(...inputs: ClassValue[]) {
 const readerHref = (c: CaseResult) => {
   const chunk = c.matched_chunks[0]?.chunk_id;
   return `/reader/${encodeURIComponent(c.case_id)}${chunk ? `?chunk=${encodeURIComponent(chunk)}` : ''}`;
-};
-
-// Helper to parse verdict JSON string if needed
-const parseVerdict = (verdict: any): string[] => {
-  if (!verdict) return [];
-  if (Array.isArray(verdict)) return verdict;
-  try {
-    const parsed = JSON.parse(verdict);
-    return Array.isArray(parsed) ? parsed : [String(parsed)];
-  } catch (e) {
-    return [String(verdict)];
-  }
 };
 
 const formatTagName = (tag: string) => {
@@ -65,13 +53,21 @@ export default function LegalSearchApp() {
   const [isSearching, setIsSearching] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [searchHistory, setSearchHistory] = useState<HistoryItem[]>([]);
-  
+  // Filter option values (court/case_type/verdict/...) come from the backend's
+  // own index, via GET /api/facets — never hardcoded here. Empty arrays for a
+  // field (e.g. case_type, until it's actually extracted by the pipeline) mean
+  // that filter section simply doesn't render, instead of offering options
+  // that are guaranteed to return zero results.
+  const [facets, setFacets] = useState<Facets | null>(null);
+
   // Real Filter States
   const [selectedCourts, setSelectedCourts] = useState<string[]>([]);
   const [selectedCaseTypes, setSelectedCaseTypes] = useState<string[]>([]);
   const [selectedVerdicts, setSelectedVerdicts] = useState<string[]>([]);
-  const [actsCited, setActsCited] = useState<string>('');
-  const [sectionsCited, setSectionsCited] = useState<string>('');
+  const [selectedActs, setSelectedActs] = useState<string[]>([]);
+  const [selectedSections, setSelectedSections] = useState<string[]>([]);
+  const [actsFilterText, setActsFilterText] = useState('');
+  const [sectionsFilterText, setSectionsFilterText] = useState('');
   const [yearFrom, setYearFrom] = useState<string>('');
   const [yearTo, setYearTo] = useState<string>('');
 
@@ -95,6 +91,26 @@ export default function LegalSearchApp() {
     }
   }
 
+  // Unfiltered, query-less facets — populates the filter checkboxes with
+  // whatever values/counts actually exist in the index right now. Called once
+  // on load; refreshed with query-aware, drill-down counts after every search.
+  async function fetchFacets() {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const response = await fetch('http://localhost:8000/api/facets', {
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      });
+      if (response.ok) {
+        const data: Facets = await response.json();
+        setFacets(data);
+      }
+    } catch (err) {
+      console.error('Facets fetch error:', err);
+    }
+  }
+
   // Authentication Check
   useEffect(() => {
     async function getUser() {
@@ -109,7 +125,8 @@ export default function LegalSearchApp() {
         } else {
           console.log("✅ User authenticated:", data.user.email);
           setUser(data.user);
-          fetchHistory(); 
+          fetchHistory();
+          fetchFacets();
         }
       } catch (err) {
         console.error("💥 Unexpected Auth Error:", err);
@@ -123,8 +140,8 @@ export default function LegalSearchApp() {
     court: selectedCourts,
     case_type: selectedCaseTypes,
     verdict: selectedVerdicts,
-    acts_cited: actsCited ? actsCited.split(',').map(s => s.trim()).filter(Boolean) : [],
-    sections_cited: sectionsCited ? sectionsCited.split(',').map(s => s.trim()).filter(Boolean) : [],
+    acts_cited: selectedActs,
+    sections_cited: selectedSections,
     year_from: yearFrom || undefined,
     year_to: yearTo || undefined,
   });
@@ -158,6 +175,7 @@ export default function LegalSearchApp() {
         const data: SearchResponse = await response.json();
         setSearchResponse(data);
         setSelectedCase(data.results.length > 0 ? data.results[0] : null);
+        setFacets(data.facets); // Drill-down counts for the active query + filters
         fetchHistory(); // Refresh history
       }
     } catch (err) {
@@ -174,22 +192,19 @@ export default function LegalSearchApp() {
   };
 
   // History click → replay the STORED query + filters directly. The stored
-  // filters are already normalized (court "SC", verdict "partly_allowed", …) and
-  // normalization is idempotent, so replaying them reproduces the original
-  // results exactly — instead of reading the sidebar state, which setQuery/setX
-  // have only just *scheduled* and not yet applied. We also reflect the values
-  // back into the sidebar (best-effort reverse of the backend normalization) so
-  // the UI matches what was searched.
+  // filters are already the exact canonical index values (court "SC", verdict
+  // "partly_allowed", …) — same as what the facet-driven checkboxes use as
+  // their value now, so no reverse-mapping is needed; we just feed them back
+  // into the sidebar state directly, instead of reading the sidebar state,
+  // which setQuery/setX have only just *scheduled* and not yet applied.
   const applyHistory = (item: HistoryItem) => {
     const f = item.filters || {};
     setQuery(item.query || '');
-    setSelectedCourts((f.court ?? []).map(c => (c === 'SC' ? 'Supreme Court' : c)));
-    setSelectedCaseTypes((f.case_type ?? []).map(t => t.charAt(0).toUpperCase() + t.slice(1)));
-    setSelectedVerdicts(
-      (f.verdict ?? []).map(v => v.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')),
-    );
-    setActsCited((f.acts_cited ?? []).join(', '));
-    setSectionsCited((f.sections_cited ?? []).join(', '));
+    setSelectedCourts(f.court ?? []);
+    setSelectedCaseTypes(f.case_type ?? []);
+    setSelectedVerdicts(f.verdict ?? []);
+    setSelectedActs(f.acts_cited ?? []);
+    setSelectedSections(f.sections_cited ?? []);
     setYearFrom(f.year_from != null ? String(f.year_from) : '');
     setYearTo(f.year_to != null ? String(f.year_to) : '');
     runSearch(item.query || '', f);
@@ -201,6 +216,74 @@ export default function LegalSearchApp() {
     } else {
       setList([...list, value]);
     }
+  };
+
+  // Sections are scoped to the selected act(s): the index's canonical section
+  // tag is always literally "<act> s.<n>" (see chunk_info_extractor.py /
+  // statute_index.py — `act` is the partition of the same `canonical` string
+  // sections_cited carries), so a prefix match is exact, not a heuristic.
+  const sectionsForSelectedActs = (facets?.sections_cited ?? []).filter(({ value }) =>
+    selectedActs.some(act => String(value).startsWith(`${act} s.`))
+  );
+
+  // Drop any selected section that no longer belongs to a still-selected act
+  // (e.g. the user unchecked the act it came from) so stale filters can't
+  // silently stay active.
+  useEffect(() => {
+    setSelectedSections(prev =>
+      prev.filter(s => selectedActs.some(act => s.startsWith(`${act} s.`)))
+    );
+  }, [selectedActs]);
+
+  // One renderer for every facet-backed checkbox group (Jurisdiction/Case
+  // Type/Outcome) instead of three copy-pasted blocks each hardcoding its own
+  // option list. Renders nothing if the facet has no values — e.g. case_type
+  // today, until the pipeline actually extracts it — rather than offering
+  // checkboxes that are guaranteed to return zero results.
+  const renderFacetGroup = (
+    label: string,
+    options: { value: any; count: number; label?: string }[] | undefined,
+    selected: string[],
+    setSelected: (v: string[]) => void,
+    search?: { value: string; onChange: (v: string) => void }
+  ) => {
+    if (!options || options.length === 0) return null;
+    const visible = search?.value
+      ? options.filter(o => (o.label || formatTagName(String(o.value))).toLowerCase().includes(search.value.toLowerCase()))
+      : options;
+    return (
+      <div className="space-y-2">
+        <label className="text-[11px] font-bold text-slate-700 ml-1">{label}</label>
+        {search && options.length > 8 && (
+          <input
+            type="text"
+            placeholder={`Filter ${label.toLowerCase()}...`}
+            value={search.value}
+            onChange={(e) => search.onChange(e.target.value)}
+            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-[11px] font-semibold focus:ring-2 focus:ring-blue-500/20 outline-none"
+          />
+        )}
+        <div className="grid grid-cols-1 gap-1.5 max-h-48 overflow-y-auto">
+          {visible.map(({ value, count, label: optLabel }) => (
+            <label key={String(value)} className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-slate-100 hover:bg-slate-50 cursor-pointer transition-all">
+              <span className="flex items-center gap-3 min-w-0">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(String(value))}
+                  onChange={() => toggleFilter(selected, setSelected, String(value))}
+                  className="w-4 h-4 rounded-md border-slate-300 text-blue-600 focus:ring-blue-500/20 shrink-0"
+                />
+                <span className="text-xs font-semibold text-slate-600 truncate">{optLabel || formatTagName(String(value))}</span>
+              </span>
+              <span className="text-[10px] font-bold text-slate-400 shrink-0">{count}</span>
+            </label>
+          ))}
+          {visible.length === 0 && (
+            <p className="text-[11px] text-slate-400 italic px-1">No matches.</p>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const handleLogout = async () => {
@@ -251,11 +334,15 @@ export default function LegalSearchApp() {
           <div>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Refinement</h3>
-              <button 
+              <button
                 onClick={() => {
                   setSelectedCourts([]);
                   setSelectedCaseTypes([]);
                   setSelectedVerdicts([]);
+                  setSelectedActs([]);
+                  setSelectedSections([]);
+                  setActsFilterText('');
+                  setSectionsFilterText('');
                   setYearFrom('');
                   setYearTo('');
                 }}
@@ -266,106 +353,82 @@ export default function LegalSearchApp() {
             </div>
             
             <div className="space-y-6">
-              {/* JURISDICTION / COURT */}
-              <div className="space-y-2">
-                <label className="text-[11px] font-bold text-slate-700 ml-1">Jurisdiction</label>
-                <div className="grid grid-cols-1 gap-1.5">
-                  {['Supreme Court', 'Delhi High Court', 'Bombay High Court'].map(court => (
-                    <label key={court} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-slate-100 hover:bg-slate-50 cursor-pointer transition-all">
-                      <input 
-                        type="checkbox" 
-                        checked={selectedCourts.includes(court)}
-                        onChange={() => toggleFilter(selectedCourts, setSelectedCourts, court)}
-                        className="w-4 h-4 rounded-md border-slate-300 text-blue-600 focus:ring-blue-500/20" 
-                      />
-                      <span className="text-xs font-semibold text-slate-600">{court}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* CASE TYPE */}
-              <div className="space-y-2">
-                <label className="text-[11px] font-bold text-slate-700 ml-1">Case Type</label>
-                <div className="grid grid-cols-1 gap-1.5">
-                  {['Criminal', 'Civil', 'Constitutional', 'Tax'].map(type => (
-                    <label key={type} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-slate-100 hover:bg-slate-50 cursor-pointer transition-all">
-                      <input 
-                        type="checkbox" 
-                        checked={selectedCaseTypes.includes(type)}
-                        onChange={() => toggleFilter(selectedCaseTypes, setSelectedCaseTypes, type)}
-                        className="w-4 h-4 rounded-md border-slate-300 text-blue-600 focus:ring-blue-500/20" 
-                      />
-                      <span className="text-xs font-semibold text-slate-600">{type}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* VERDICT */}
-              <div className="space-y-2">
-                <label className="text-[11px] font-bold text-slate-700 ml-1">Outcome</label>
-                <div className="grid grid-cols-1 gap-1.5">
-                  {['Allowed', 'Dismissed', 'Partly Allowed'].map(verdict => (
-                    <label key={verdict} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-slate-100 hover:bg-slate-50 cursor-pointer transition-all">
-                      <input 
-                        type="checkbox" 
-                        checked={selectedVerdicts.includes(verdict)}
-                        onChange={() => toggleFilter(selectedVerdicts, setSelectedVerdicts, verdict)}
-                        className="w-4 h-4 rounded-md border-slate-300 text-blue-600 focus:ring-blue-500/20" 
-                      />
-                      <span className="text-xs font-semibold text-slate-600">{verdict}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
+              {renderFacetGroup('Jurisdiction', facets?.court, selectedCourts, setSelectedCourts)}
+              {renderFacetGroup('Case Type', facets?.case_type, selectedCaseTypes, setSelectedCaseTypes)}
+              {renderFacetGroup('Outcome', facets?.verdict, selectedVerdicts, setSelectedVerdicts)}
 
               {/* YEAR RANGE */}
               <div className="space-y-2">
                 <label className="text-[11px] font-bold text-slate-700 ml-1">Year Range</label>
                 <div className="flex gap-2 px-1">
-                  <input 
-                    type="text" 
-                    placeholder="From" 
+                  <input
+                    type="number"
+                    placeholder={facets?.year_range?.min ? `From ${facets.year_range.min}` : 'From'}
                     value={yearFrom}
                     onChange={(e) => setYearFrom(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-[10px] font-bold focus:ring-2 focus:ring-blue-500/20 outline-none" 
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-[10px] font-bold focus:ring-2 focus:ring-blue-500/20 outline-none"
                   />
-                  <input 
-                    type="text" 
-                    placeholder="To" 
+                  <input
+                    type="number"
+                    placeholder={facets?.year_range?.max ? `To ${facets.year_range.max}` : 'To'}
                     value={yearTo}
                     onChange={(e) => setYearTo(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-[10px] font-bold focus:ring-2 focus:ring-blue-500/20 outline-none" 
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-[10px] font-bold focus:ring-2 focus:ring-blue-500/20 outline-none"
                   />
                 </div>
               </div>
 
               {/* ACTS & SECTIONS */}
               <div className="space-y-4 pt-2 border-t border-slate-100">
+                {renderFacetGroup(
+                  'Acts Cited',
+                  facets?.acts_cited,
+                  selectedActs,
+                  setSelectedActs,
+                  { value: actsFilterText, onChange: setActsFilterText }
+                )}
+
                 <div className="space-y-2">
-                  <label className="text-[11px] font-bold text-slate-700 ml-1 flex items-center gap-2">
-                    <FileText className="w-3 h-3" /> Acts Cited
-                  </label>
-                  <input 
-                    type="text" 
-                    placeholder="e.g. IPC, BNSS" 
-                    value={actsCited}
-                    onChange={(e) => setActsCited(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs font-semibold focus:ring-2 focus:ring-blue-500/20 outline-none" 
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[11px] font-bold text-slate-700 ml-1 flex items-center gap-2">
-                    <History className="w-3 h-3" /> Sections
-                  </label>
-                  <input 
-                    type="text" 
-                    placeholder="e.g. 302, 167" 
-                    value={sectionsCited}
-                    onChange={(e) => setSectionsCited(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs font-semibold focus:ring-2 focus:ring-blue-500/20 outline-none" 
-                  />
+                  <label className="text-[11px] font-bold text-slate-700 ml-1">Sections</label>
+                  {selectedActs.length === 0 ? (
+                    <p className="text-[11px] text-slate-400 italic px-1">Select an act above to see its sections</p>
+                  ) : (
+                    <>
+                      {sectionsForSelectedActs.length > 8 && (
+                        <input
+                          type="text"
+                          placeholder="Filter sections..."
+                          value={sectionsFilterText}
+                          onChange={(e) => setSectionsFilterText(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-[11px] font-semibold focus:ring-2 focus:ring-blue-500/20 outline-none"
+                        />
+                      )}
+                      <div className="grid grid-cols-1 gap-1.5 max-h-48 overflow-y-auto">
+                        {sectionsForSelectedActs
+                          .filter(({ value, label: optLabel }) =>
+                            !sectionsFilterText ||
+                            (optLabel || String(value)).toLowerCase().includes(sectionsFilterText.toLowerCase())
+                          )
+                          .map(({ value, count, label: optLabel }) => (
+                            <label key={String(value)} className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-slate-100 hover:bg-slate-50 cursor-pointer transition-all">
+                              <span className="flex items-center gap-3 min-w-0">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedSections.includes(String(value))}
+                                  onChange={() => toggleFilter(selectedSections, setSelectedSections, String(value))}
+                                  className="w-4 h-4 rounded-md border-slate-300 text-blue-600 focus:ring-blue-500/20 shrink-0"
+                                />
+                                <span className="text-xs font-semibold text-slate-600 truncate">{optLabel || String(value)}</span>
+                              </span>
+                              <span className="text-[10px] font-bold text-slate-400 shrink-0">{count}</span>
+                            </label>
+                          ))}
+                        {sectionsForSelectedActs.length === 0 && (
+                          <p className="text-[11px] text-slate-400 italic px-1">No cited sections found for the selected act(s).</p>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -486,10 +549,10 @@ export default function LegalSearchApp() {
                             {ROLE_DISPLAY_NAMES[result.matched_chunks[0].chunk_type] || result.matched_chunks[0].chunk_type}
                           </div>
                         )}
-                        {parseVerdict(result.verdict).length > 0 && (
+                        {result.verdict.length > 0 && (
                           <div className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-bold uppercase rounded border border-emerald-100">
                             <Gavel className="w-2.5 h-2.5" />
-                            {formatTagName(parseVerdict(result.verdict)[0])}
+                            {formatTagName(result.verdict[0])}
                           </div>
                         )}
                       </div>
@@ -562,9 +625,9 @@ export default function LegalSearchApp() {
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <p className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em]">Judgment Extract</p>
-                    {parseVerdict(selectedCase.verdict).length > 0 && (
+                    {selectedCase.verdict.length > 0 && (
                       <span className="px-2 py-0.5 bg-emerald-600 text-white text-[9px] font-black uppercase rounded shadow-sm">
-                        {formatTagName(parseVerdict(selectedCase.verdict)[0])}
+                        {formatTagName(selectedCase.verdict[0])}
                       </span>
                     )}
                   </div>

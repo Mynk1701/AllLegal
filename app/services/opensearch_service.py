@@ -77,29 +77,79 @@ class OpenSearchService:
         return clauses
 
     # ----------------------------------------------------------------- search
-    def search(self, *, query_vector, filters: dict, size: int) -> list:
-        """Return raw chunk hits (over-fetched for case grouping)."""
+    def search(self, *, query_vector, filters: dict, page: int, limit: int) -> tuple[list, int]:
+        """One hit per distinct case_id (top MAX_CHUNKS_PER_CASE chunks via
+        `collapse`+`inner_hits`), paginated at the case level, plus the
+        distinct-case total for this query (`cardinality` agg in the same
+        request — no extra round trip). Exact in both modes: filter-only mode
+        scans every matching doc; semantic-query mode sizes its kNN candidate
+        pool (k) to the exact matching-chunk count via a cheap `_count` call,
+        so it's exact too as long as that count is under KNN_K_CEILING.
+
+        `collapse` does the chunk->case dedup inside OpenSearch itself, so
+        `from`/`size` here mean cases, not chunks — this replaces the old
+        chunk-budget estimate (CHUNK_FETCH_FACTOR), which broke down because
+        chunks-per-case varies wildly (1-107x in the real corpus) and a fixed
+        multiplier can't track that. Verified against this exact OpenSearch
+        version (2.19.5, Lucene k-NN engine): a native `knn` query clause
+        combined with `collapse`+`inner_hits` works correctly — the known
+        collapse gap (github.com/opensearch-project/neural-search#665) is for
+        the neural-search plugin's separate `hybrid` compound query type, not
+        the plain `knn` query used here.
+        """
         clauses = self._filter_clauses(filters)
+        collapse = {
+            "field": "case_id",
+            "inner_hits": {
+                "name": "top_chunks",
+                "size": settings.MAX_CHUNKS_PER_CASE,
+                "sort": [{"_score": "desc"}] if query_vector is not None else [{"chunk_sequence": "asc"}],
+            },
+        }
+        aggs = {"distinct_cases": {"cardinality": {"field": "case_id"}}}
+
         if query_vector is not None:
-            knn = {
-                "chunk_embedding": {
-                    "vector": query_vector, 
-                    "k": max(size, settings.KNN_K),
-                    "method_parameters": {"ef_search": 256}
-                }
-            }
+            # k = candidate pool of NEIGHBOUR CHUNKS, pre-collapse. Sized to the
+            # EXACT number of chunks that match the active filters (a cheap
+            # _count call, ~20-50ms) rather than guessed — that makes k cover
+            # every real candidate whenever the filtered set fits under the
+            # ceiling, so collapse can surface every distinct case, not just a
+            # margin estimated from a multiplier. Only degrades to an
+            # approximate top-k once the filtered set exceeds KNN_K_CEILING
+            # (a deliberately huge, unfiltered, full-corpus query) — verified
+            # empirically that this exact-count approach gives correct,
+            # non-shortfalling pagination through every page, where a
+            # page*limit-scaled multiplier ran out of margin by page 3-4.
+            count_query = {"bool": {"filter": clauses}} if clauses else {"match_all": {}}
+            matching_chunks = self.client.count(index=self.index, body={"query": count_query})["count"]
+            k = min(matching_chunks, settings.KNN_K_CEILING)
+            # No method_parameters.ef_search here: OpenSearch's Lucene HNSW engine
+            # ignores it and dynamically uses k instead, so setting it is a no-op.
+            knn = {"chunk_embedding": {"vector": query_vector, "k": k}}
             if clauses:
                 knn["chunk_embedding"]["filter"] = {"bool": {"filter": clauses}}
-            body = {"size": size, "_source": SOURCE_FIELDS, "query": {"knn": knn}}
+            body = {
+                "from": (page - 1) * limit,
+                "size": limit,
+                "_source": SOURCE_FIELDS,
+                "query": {"knn": knn},
+                "collapse": collapse,
+                "aggs": aggs,
+            }
         else:
             query = {"bool": {"filter": clauses}} if clauses else {"match_all": {}}
             body = {
-                "size": size,
+                "from": (page - 1) * limit,
+                "size": limit,
                 "_source": SOURCE_FIELDS,
                 "query": query,
                 "sort": [{"date_decided": "desc"}],
+                "collapse": collapse,
+                "aggs": aggs,
             }
-        return self.client.search(index=self.index, body=body)["hits"]["hits"]
+        resp = self.client.search(index=self.index, body=body)
+        total = resp.get("aggregations", {}).get("distinct_cases", {}).get("value", 0)
+        return resp["hits"]["hits"], total
 
     def get_case_chunks(self, case_id: str) -> list:
         """All chunks for one case, in document order — powers the case-detail view."""

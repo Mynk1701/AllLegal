@@ -19,7 +19,7 @@ logger = logging.getLogger("main")
 logger.setLevel(logging.INFO) # Our app specifically will log INFO
 
 # 2. Force silence noisy libraries
-for noisy_lib in ["httpx", "opensearch", "uvicorn", "supabase", "postgrest", "voyageai", "security_logger", "sqlalchemy.engine"]:
+for noisy_lib in ["httpx", "opensearch", "uvicorn", "supabase", "postgrest", "voyageai", "security_logger"]:
     logging.getLogger(noisy_lib).setLevel(logging.WARNING)
 
 # Startup and shutdown events

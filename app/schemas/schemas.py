@@ -5,9 +5,33 @@ Search is case-grouped: results are CASES, each carrying the top matching CHUNKS
 (the highlight payload for the PDF reader). OpenSearch ranks/filters; Supabase
 supplies case_name, bench, bbox/page_range, and the signed PDF URL.
 """
-from pydantic import BaseModel, Field
+import json
+
+from pydantic import BaseModel, Field, field_validator
 from typing import Any, Dict, List, Optional
 from datetime import datetime
+
+
+def _normalize_verdict(v: Any) -> List[str]:
+    """Coerce verdict into list[str] regardless of source shape.
+
+    flatten_verdicts() (stage_05_index.py) produces a list[str], and that's
+    what OpenSearch always returns. Supabase's `cases.verdict` column may come
+    back as a native list, a JSON-encoded string, or a single bare string
+    depending on how it was written — normalize all of them here rather than
+    assuming one shape and crashing response validation on the others.
+    """
+    if not v:
+        return []
+    if isinstance(v, list):
+        return [str(x) for x in v if x]
+    if isinstance(v, str):
+        try:
+            parsed = json.loads(v)
+        except (ValueError, TypeError):
+            return [v]
+        return [str(x) for x in parsed if x] if isinstance(parsed, list) else [v]
+    return [str(v)]
 
 
 # ==================== Search: chunk + case ====================
@@ -30,7 +54,7 @@ class CaseResult(BaseModel):
     citation: Optional[str] = None
     court: Optional[str] = None
     case_type: Optional[str] = None
-    verdict: Optional[str] = None
+    verdict: List[str] = Field(default_factory=list)
     year: Optional[int] = None
     date_decided: Optional[str] = None
     bench: List[str] = Field(default_factory=list, description="Judge names (Supabase)")
@@ -41,12 +65,18 @@ class CaseResult(BaseModel):
     score: Optional[float] = Field(None, description="Best matched-chunk score")
     matched_chunks: List[MatchedChunk] = Field(default_factory=list)
 
+    @field_validator("verdict", mode="before")
+    @classmethod
+    def _coerce_verdict(cls, v: Any) -> List[str]:
+        return _normalize_verdict(v)
+
 
 # ==================== Facets ====================
 
 class FacetValue(BaseModel):
     value: Any
     count: int = Field(..., description="Distinct CASES (cardinality), not chunks")
+    label: Optional[str] = Field(None, description="Lawyer-friendly display text, if different from value")
 
 
 class Facets(BaseModel):
@@ -107,7 +137,7 @@ class CaseDetail(BaseModel):
     citation: Optional[str] = None
     court: Optional[str] = None
     case_type: Optional[str] = None
-    verdict: Optional[str] = None
+    verdict: List[str] = Field(default_factory=list)
     year: Optional[int] = None
     date_decided: Optional[str] = None
     bench: List[str] = Field(default_factory=list)
@@ -117,6 +147,11 @@ class CaseDetail(BaseModel):
     pdf_url: Optional[str] = None
     chunks: List[MatchedChunk] = Field(default_factory=list)
     cites: List[CaseCitation] = Field(default_factory=list)
+
+    @field_validator("verdict", mode="before")
+    @classmethod
+    def _coerce_verdict(cls, v: Any) -> List[str]:
+        return _normalize_verdict(v)
 
 
 # ==================== Groups & Annotations (PDF reader, Phase 2) ====================

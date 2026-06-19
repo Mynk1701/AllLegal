@@ -6,16 +6,6 @@
 import { FileText, Scale, Users, Gavel, Link2, ExternalLink } from 'lucide-react';
 import type { CaseDetail } from '@/lib/reader/types';
 
-function parseVerdict(verdict?: string | null): string[] {
-  if (!verdict) return [];
-  try {
-    const parsed = JSON.parse(verdict);
-    return Array.isArray(parsed) ? parsed : [String(parsed)];
-  } catch {
-    return [String(verdict)];
-  }
-}
-
 function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="space-y-3">
@@ -29,7 +19,7 @@ function Section({ title, icon, children }: { title: string; icon: React.ReactNo
 }
 
 export default function MetadataPanel({ caseDetail }: { caseDetail: CaseDetail }) {
-  const verdicts = parseVerdict(caseDetail.verdict);
+  const verdicts = caseDetail.verdict;
   const tags = caseDetail.sections_cited.length > 0 ? caseDetail.sections_cited : caseDetail.acts_cited;
 
   return (
