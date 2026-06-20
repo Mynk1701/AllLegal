@@ -199,7 +199,7 @@ class SupabaseService:
             True if logged successfully
         """
         try:
-            self.client.table("search_logs").insert({
+            self.admin.table("search_logs").insert({
                 "search_id": search_id,
                 "query": query,
                 "results_count": results_count,
@@ -218,7 +218,7 @@ class SupabaseService:
         """Most-recent search_logs rows for a user, newest first (raw — caller de-dupes)."""
         try:
             resp = (
-                self.client.table("search_logs")
+                self.admin.table("search_logs")
                 .select("query, filters_applied, created_at")
                 .eq("user_id", user_id)
                 .order("created_at", desc=True)

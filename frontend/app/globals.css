@@ -99,6 +99,45 @@ body {
   background: hsl(var(--muted-foreground));
 }
 
+/* ===== Dual-thumb range slider (FilterBar Year / Bench) =====
+   Two native range inputs are overlaid on one track drawn by a sibling div.
+   The inputs are transparent and ignore pointer events; only their thumbs are
+   interactive, so each thumb drags independently and the track shows through. */
+.range-input {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  pointer-events: none;
+}
+.range-input:focus {
+  outline: none;
+}
+.range-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: auto;
+  height: 16px;
+  width: 16px;
+  border-radius: 9999px;
+  background: #2563eb;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.45);
+  cursor: pointer;
+}
+.range-input::-moz-range-thumb {
+  pointer-events: auto;
+  height: 16px;
+  width: 16px;
+  border-radius: 9999px;
+  background: #2563eb;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.45);
+  cursor: pointer;
+}
+.range-input::-moz-range-track {
+  background: transparent;
+}
+
 /* ===== pdf.js text layer (selectable text over the canvas) =====
    Flattened from pdfjs-dist/web/pdf_viewer.css. The container sits above the
    page canvas with transparent glyphs, so text is selectable for annotation

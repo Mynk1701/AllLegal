@@ -4,6 +4,7 @@
 
 import { createClient } from '@/utils/supabase/client';
 import type { CaseDetail } from '@/lib/reader/types';
+import type { HistoryItem } from '@/lib/search';
 import type {
   Annotation,
   AnnotationCreateBody,
@@ -31,6 +32,15 @@ export async function getCaseDetail(caseId: string): Promise<CaseDetail> {
   const res = await authedFetch(`/api/cases/${encodeURIComponent(caseId)}`);
   if (!res.ok) {
     throw new Error(`Failed to load case ${caseId} (${res.status})`);
+  }
+  return res.json();
+}
+
+/** Recent searches for the signed-in user (query + filters + timestamp). */
+export async function listSearchHistory(limit = 50): Promise<HistoryItem[]> {
+  const res = await authedFetch(`/api/search/history?limit=${limit}`);
+  if (!res.ok) {
+    throw new Error(`Failed to load search history (${res.status})`);
   }
   return res.json();
 }

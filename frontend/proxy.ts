@@ -1,7 +1,12 @@
+// Renamed from `middleware.ts` — Next.js 16 deprecated the Middleware file
+// convention in favour of Proxy (same functionality, clearer name). Keeps the
+// Supabase session fresh on every request and gates routes:
+//   • guests → bounced to /login (except public routes)
+//   • signed-in users → kept off the marketing/auth pages, sent to /search
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request,
   })
@@ -35,15 +40,28 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  if (
-    !user &&
-    !request.nextUrl.pathname.startsWith('/login') &&
-    !request.nextUrl.pathname.startsWith('/signup') &&
-    !request.nextUrl.pathname.startsWith('/auth')
-  ) {
-    // no user, potentially respond by redirecting the user to the login page
+  const { pathname } = request.nextUrl
+
+  // Public routes anyone can reach without a session: the marketing landing,
+  // auth pages, and the Supabase auth callback.
+  const isPublic =
+    pathname === '/' ||
+    pathname.startsWith('/login') ||
+    pathname.startsWith('/signup') ||
+    pathname.startsWith('/auth')
+
+  // Guests: bounce anything that isn't public to the login page.
+  if (!user && !isPublic) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
+    return NextResponse.redirect(url)
+  }
+
+  // Signed-in users have no business on the marketing or auth pages — drop them
+  // straight into the app.
+  if (user && (pathname === '/' || pathname.startsWith('/login') || pathname.startsWith('/signup'))) {
+    const url = request.nextUrl.clone()
+    url.pathname = '/search'
     return NextResponse.redirect(url)
   }
 
