@@ -34,7 +34,18 @@ class SupabaseService:
         except Exception as e:
             logger.error(f"❌ Failed to initialize Supabase: {str(e)}")
             raise
-    
+
+    # ==================== Authentication ====================
+    # JWT verification is NOT done here. It lives in a single place —
+    # app/core/security.py get_current_user(), which validates Supabase's
+    # asymmetric tokens via JWKS (ES256). The previous HS256 + SUPABASE_JWT_SECRET
+    # path that lived here was dead code AND wrong for modern Supabase (which
+    # signs with rotating asymmetric keys, not the legacy shared secret), so it
+    # was removed to keep one source of truth. sign_up/sign_in were removed too
+    # — their only caller, the REST /api/auth/* routes, was unused dead code
+    # the frontend never called (it talks to Supabase directly via server
+    # actions), so it was deleted as well.
+
     # ==================== Search Enrichment (OpenSearch -> Supabase) ====================
 
     def get_cases_by_ids(self, case_ids: List[str]) -> Dict[str, Dict]:

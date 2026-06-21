@@ -11,6 +11,7 @@ import { ROLE_COLORS, ROLE_DISPLAY_NAMES } from '@/lib/reader/roles';
 import GroupPicker from '@/components/groups/GroupPicker';
 import FilterBar from '@/components/search/FilterBar';
 import { parseSearchParams, filterSummary, type HistoryItem, type SearchFilters } from '@/lib/search';
+import { listSearchHistory, searchCases, getFacets } from '@/lib/api';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -26,6 +27,10 @@ const readerHref = (c: CaseResult) => {
 const formatTagName = (tag: string) => {
   return tag.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 };
+
+// Case-level page size. OpenSearch collapses chunks→cases server-side, so this
+// (and the response's total_cases) is measured in distinct cases, not chunks.
+const PAGE_SIZE = 10;
 
 function SearchWorkspace() {
   const [query, setQuery] = useState('');
@@ -52,6 +57,13 @@ function SearchWorkspace() {
   const [yearFrom, setYearFrom] = useState<string>('');
   const [yearTo, setYearTo] = useState<string>('');
 
+  // Pagination over the CURRENTLY EXECUTED search. activeQuery/activeFilters hold
+  // the {query, filters} that produced the visible results, so Prev/Next page the
+  // executed search — never staged filter edits the user hasn't submitted yet.
+  const [page, setPage] = useState(1);
+  const [activeQuery, setActiveQuery] = useState('');
+  const [activeFilters, setActiveFilters] = useState<SearchFilters>({});
+
   const router = useRouter();
   const supabase = createClient();
   const searchParams = useSearchParams();
@@ -59,16 +71,7 @@ function SearchWorkspace() {
 
   async function fetchHistory() {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-
-      const response = await fetch('http://localhost:8000/api/search/history', {
-        headers: { 'Authorization': `Bearer ${session.access_token}` }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setSearchHistory(data);
-      }
+      setSearchHistory(await listSearchHistory());
     } catch (err) {
       console.error('History fetch error:', err);
     }
@@ -79,16 +82,7 @@ function SearchWorkspace() {
   // on load; refreshed with query-aware, drill-down counts after every search.
   async function fetchFacets() {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-
-      const response = await fetch('http://localhost:8000/api/facets', {
-        headers: { 'Authorization': `Bearer ${session.access_token}` }
-      });
-      if (response.ok) {
-        const data: Facets = await response.json();
-        setFacets(data);
-      }
+      setFacets(await getFacets('', {}));
     } catch (err) {
       console.error('Facets fetch error:', err);
     }
@@ -128,40 +122,28 @@ function SearchWorkspace() {
   // Single source of truth for running a search. Takes query + filters EXPLICITLY
   // (never reads component state), so the form and a history replay produce
   // identical, deterministic results — search is a pure function of {query, filters}.
-  const runSearch = async (queryStr: string, filters: SearchFilters) => {
+  const runSearch = async (queryStr: string, filters: SearchFilters, pageNum = 1) => {
     setIsSearching(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-
-      // Standard API names from search.py.
-      const params = new URLSearchParams();
-      if (queryStr) params.append('query', queryStr);
-      (filters.court ?? []).forEach(c => params.append('court', c));
-      (filters.case_type ?? []).forEach(t => params.append('case_type', t));
-      (filters.verdict ?? []).forEach(v => params.append('verdict', v));
-      (filters.acts_cited ?? []).forEach(a => params.append('acts_cited', String(a)));
-      (filters.sections_cited ?? []).forEach(s => params.append('sections_cited', String(s)));
-      (filters.bench_strength ?? []).forEach(b => params.append('bench_strength', String(b)));
-      if (filters.year_from) params.append('year_from', String(filters.year_from));
-      if (filters.year_to) params.append('year_to', String(filters.year_to));
-
-      const response = await fetch(`http://localhost:8000/api/search?${params.toString()}`, {
-        headers: { 'Authorization': `Bearer ${session.access_token}` }
-      });
-
-      if (response.ok) {
-        const data: SearchResponse = await response.json();
-        setSearchResponse(data);
-        setSelectedCase(data.results.length > 0 ? data.results[0] : null);
-        setFacets(data.facets); // Drill-down counts for the active query + filters
-        fetchHistory(); // Refresh history
-      }
+      const data = await searchCases(queryStr, filters, pageNum, PAGE_SIZE);
+      setSearchResponse(data);
+      setSelectedCase(data.results.length > 0 ? data.results[0] : null);
+      setFacets(data.facets); // Drill-down counts for the active query + filters
+      setActiveQuery(queryStr);
+      setActiveFilters(filters);
+      setPage(pageNum);
+      fetchHistory(); // Refresh history
     } catch (err) {
       console.error('Search error:', err);
     } finally {
       setIsSearching(false);
     }
+  };
+
+  // Page through the executed search (activeQuery/activeFilters), not staged edits.
+  const goToPage = (p: number) => {
+    if (p < 1 || isSearching) return;
+    runSearch(activeQuery, activeFilters, p);
   };
 
   // Form submit → search the current query + active filters. No-op when there's
@@ -218,6 +200,9 @@ function SearchWorkspace() {
     runSearch(q, filters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, spString]);
+
+  const totalCases = searchResponse?.total_cases ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalCases / PAGE_SIZE));
 
   if (!user) {
     return (
@@ -419,6 +404,30 @@ function SearchWorkspace() {
                         <p className="text-slate-500 font-medium">No cases found matching your criteria.</p>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {searchResponse && !isSearching && searchResponse.results.length > 0 && totalPages > 1 && (
+                  <div className="flex items-center justify-between mt-10 pt-6 border-t border-slate-200/60">
+                    <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+                      Page {page} of {totalPages} · {totalCases} cases
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => goToPage(page - 1)}
+                        disabled={page <= 1 || isSearching}
+                        className="px-4 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        onClick={() => goToPage(page + 1)}
+                        disabled={page >= totalPages || isSearching}
+                        className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
                   </div>
                 )}
               </>
