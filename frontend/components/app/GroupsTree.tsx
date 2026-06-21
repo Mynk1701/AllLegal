@@ -108,7 +108,9 @@ export default function GroupsTree() {
                 {items?.map((it) => (
                   <Link
                     key={it.case_id}
-                    href={`/reader/${encodeURIComponent(it.case_id)}`}
+                    href={`/reader/${encodeURIComponent(it.case_id)}?group=${encodeURIComponent(grp.id)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-slate-400 hover:bg-white/5 hover:text-white transition-colors"
                   >
                     <FileText className="w-3.5 h-3.5 shrink-0 text-slate-500" />

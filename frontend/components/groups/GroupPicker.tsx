@@ -14,10 +14,14 @@ export default function GroupPicker({
   caseId,
   caseName,
   onClose,
+  onAdded,
 }: {
   caseId: string;
   caseName?: string;
   onClose: () => void;
+  // Fired after the case is successfully added to (or created into) a group, so a
+  // caller (e.g. the reader) can refresh memberships / activate that group.
+  onAdded?: (groupId: string) => void;
 }) {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +53,7 @@ export default function GroupPicker({
     try {
       await addCaseToGroup(groupId, caseId);
       markAdded(groupId);
+      onAdded?.(groupId);
     } catch {
       setError('Failed to add to group');
     } finally {
@@ -66,6 +71,7 @@ export default function GroupPicker({
       await addCaseToGroup(grp.id, caseId);
       setGroups((prev) => [{ ...grp, item_count: 1 }, ...(prev ?? [])]);
       markAdded(grp.id);
+      onAdded?.(grp.id);
       setNewName('');
     } catch {
       setError('Failed to create group');

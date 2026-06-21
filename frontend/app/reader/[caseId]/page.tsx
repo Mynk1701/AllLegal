@@ -40,6 +40,7 @@ export default function ReaderPage() {
   const searchParams = useSearchParams();
   const caseId = params.caseId;
   const activeChunkId = searchParams.get('chunk');
+  const initialGroupId = searchParams.get('group');
 
   const [caseDetail, setCaseDetail] = useState<CaseDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -78,5 +79,5 @@ export default function ReaderPage() {
   }
   if (!caseDetail) return <FullscreenLoader />;
 
-  return <ReaderView caseDetail={caseDetail} activeChunkId={activeChunkId} />;
+  return <ReaderView caseDetail={caseDetail} activeChunkId={activeChunkId} initialGroupId={initialGroupId} />;
 }

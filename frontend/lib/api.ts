@@ -4,7 +4,8 @@
 
 import { createClient } from '@/utils/supabase/client';
 import type { CaseDetail } from '@/lib/reader/types';
-import type { HistoryItem } from '@/lib/search';
+import { filtersToQueryString, type HistoryItem, type SearchFilters } from '@/lib/search';
+import type { Facets, SearchResponse } from '@/types/legal';
 import type {
   Annotation,
   AnnotationCreateBody,
@@ -41,6 +42,36 @@ export async function listSearchHistory(limit = 50): Promise<HistoryItem[]> {
   const res = await authedFetch(`/api/search/history?limit=${limit}`);
   if (!res.ok) {
     throw new Error(`Failed to load search history (${res.status})`);
+  }
+  return res.json();
+}
+
+/** Case-grouped semantic search for a {query, filters} pair, one page at a time.
+ *  page/limit are CASE-level — OpenSearch collapses chunks→cases server-side, so
+ *  total_cases in the response is the distinct-case count to paginate over. */
+export async function searchCases(
+  query: string,
+  filters: SearchFilters,
+  page = 1,
+  limit = 10,
+): Promise<SearchResponse> {
+  const params = new URLSearchParams(filtersToQueryString(query, filters));
+  params.set('page', String(page));
+  params.set('limit', String(limit));
+  const res = await authedFetch(`/api/search?${params.toString()}`);
+  if (!res.ok) {
+    throw new Error(`Search failed (${res.status})`);
+  }
+  return res.json();
+}
+
+/** Query-aware, drill-down filter options. Called with an empty query+filters for
+ *  the first paint; after a search the page reuses SearchResponse.facets instead. */
+export async function getFacets(query: string, filters: SearchFilters): Promise<Facets> {
+  const qs = filtersToQueryString(query, filters);
+  const res = await authedFetch(`/api/facets${qs ? `?${qs}` : ''}`);
+  if (!res.ok) {
+    throw new Error(`Failed to load facets (${res.status})`);
   }
   return res.json();
 }

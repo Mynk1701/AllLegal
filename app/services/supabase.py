@@ -6,7 +6,6 @@ from supabase import create_client, Client
 from app.core.config import settings
 import logging
 from typing import Optional, Dict, Any, List
-import jwt
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -37,38 +36,13 @@ class SupabaseService:
             raise
     
     # ==================== Authentication ====================
-    
-    def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
-        """
-        Verify JWT token from Supabase.
-        
-        Args:
-            token: JWT token string
-            
-        Returns:
-            Decoded token payload or None if invalid
-            
-        Example:
-            >>> payload = supabase_service.verify_token(token)
-            >>> if payload:
-            ...     user_id = payload['sub']  # User ID
-        """
-        try:
-            # Decode JWT token
-            payload = jwt.decode(
-                token,
-                settings.SUPABASE_JWT_SECRET,
-                algorithms=["HS256"]
-            )
-            logger.info(f"✅ Token verified for user: {payload.get('sub')}")
-            return payload
-        except jwt.ExpiredSignatureError:
-            logger.warning("⏰ Token expired")
-            return None
-        except jwt.InvalidTokenError as e:
-            logger.error(f"❌ Invalid token: {str(e)}")
-            return None
-    
+    # JWT verification is NOT done here. It lives in a single place —
+    # app/core/security.py get_current_user(), which validates Supabase's
+    # asymmetric tokens via JWKS (ES256). The previous HS256 + SUPABASE_JWT_SECRET
+    # path that lived here was dead code AND wrong for modern Supabase (which
+    # signs with rotating asymmetric keys, not the legacy shared secret), so it
+    # was removed to keep one source of truth.
+
     def sign_up(self, email: str, password: str) -> Optional[Dict]:
         """
         Register a new user with Supabase.
