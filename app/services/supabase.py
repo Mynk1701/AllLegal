@@ -6,7 +6,6 @@ from supabase import create_client, Client
 from app.core.config import settings
 import logging
 from typing import Optional, Dict, Any, List
-import jwt
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -35,86 +34,6 @@ class SupabaseService:
         except Exception as e:
             logger.error(f"❌ Failed to initialize Supabase: {str(e)}")
             raise
-    
-    # ==================== Authentication ====================
-    
-    def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
-        """
-        Verify JWT token from Supabase.
-        
-        Args:
-            token: JWT token string
-            
-        Returns:
-            Decoded token payload or None if invalid
-            
-        Example:
-            >>> payload = supabase_service.verify_token(token)
-            >>> if payload:
-            ...     user_id = payload['sub']  # User ID
-        """
-        try:
-            # Decode JWT token
-            payload = jwt.decode(
-                token,
-                settings.SUPABASE_JWT_SECRET,
-                algorithms=["HS256"]
-            )
-            logger.info(f"✅ Token verified for user: {payload.get('sub')}")
-            return payload
-        except jwt.ExpiredSignatureError:
-            logger.warning("⏰ Token expired")
-            return None
-        except jwt.InvalidTokenError as e:
-            logger.error(f"❌ Invalid token: {str(e)}")
-            return None
-    
-    def sign_up(self, email: str, password: str) -> Optional[Dict]:
-        """
-        Register a new user with Supabase.
-        
-        Args:
-            email: User email
-            password: User password (min 6 chars)
-            
-        Returns:
-            User data or None if failed
-        """
-        try:
-            response = self.client.auth.sign_up({
-                "email": email,
-                "password": password
-            })
-            logger.info(f"✅ User registered: {email}")
-            return response.user.__dict__ if response.user else None
-        except Exception as e:
-            logger.error(f"❌ Sign up failed: {str(e)}")
-            return None
-    
-    def sign_in(self, email: str, password: str) -> Optional[Dict]:
-        """
-        Sign in existing user.
-        
-        Args:
-            email: User email
-            password: User password
-            
-        Returns:
-            Session data with access_token or None if failed
-        """
-        try:
-            response = self.client.auth.sign_in_with_password({
-                "email": email,
-                "password": password
-            })
-            logger.info(f"✅ User signed in: {email}")
-            return {
-                "access_token": response.session.access_token,
-                "user_id": response.user.id if response.user else None
-            }
-        except Exception as e:
-            logger.error(f"❌ Sign in failed: {str(e)}")
-            return None
     
     # ==================== Search Enrichment (OpenSearch -> Supabase) ====================
 

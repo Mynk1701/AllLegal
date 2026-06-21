@@ -62,12 +62,7 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
-    SUPABASE_JWT_SECRET: str = ""
-    
-    # Security
-    SECRET_KEY: str = "dev-secret-key-change-in-production"
-    API_KEY: str = "dev-api-key"
-    
+
     # CORS
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
