@@ -38,13 +38,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Connect to the data pipeline's StatuteIndex (statute-citation normalization).
-# It lives in the `legal-engine` git submodule, checked out at AllLegal/legal-engine
-# (see .gitmodules) — NOT in a separate sibling "parent pipeline repo" as an
-# earlier version of this comment assumed (verified wrong: parents[4] resolved
-# to AllLegal's PARENT directory, where statute_index.py doesn't exist — silently
-# left `statute_index = None` this whole time, in this checkout).
+# Primary source: the `legal-engine` git submodule (AllLegal/legal-engine, see
+# .gitmodules) — kept in sync with the upstream pipeline for local dev. That
+# submodule is private and owned by a different GitHub account, so deploy
+# platforms (Render, Vercel) can't clone it — only AllLegal's own repo gets
+# cloned there. Fallback: vendor/statute_index/ is a plain, tracked copy of the
+# same statute_index.py + annotatedCentralActs/ dataset, committed directly
+# into this repo, so the feature still works in any environment that doesn't
+# have submodule access.
 # parents[3] = AllLegal (search.py: routes→api→app→AllLegal).
-STATUTE_INDEX_PATH = Path(__file__).resolve().parents[3] / "legal-engine" / "src" / "scripts"
+_ALLLEGAL_ROOT = Path(__file__).resolve().parents[3]
+_SUBMODULE_PATH = _ALLLEGAL_ROOT / "legal-engine" / "src" / "scripts"
+_VENDORED_PATH = _ALLLEGAL_ROOT / "vendor" / "statute_index"
+STATUTE_INDEX_PATH = (
+    _SUBMODULE_PATH if (_SUBMODULE_PATH / "statute_index.py").exists() else _VENDORED_PATH
+)
 if str(STATUTE_INDEX_PATH) not in sys.path:
     sys.path.insert(0, str(STATUTE_INDEX_PATH))
 
