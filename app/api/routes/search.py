@@ -12,6 +12,7 @@ pure function of {query, filters} — there is no "filter first vs query first".
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import List, Optional
 from uuid import uuid4
@@ -172,7 +173,7 @@ def _year_of(date_decided) -> Optional[int]:
     return int(str(date_decided)[:4]) if date_decided else None
 
 
-def _build_case_result(group: dict, case_row: Optional[dict], bboxes: dict) -> CaseResult:
+def _build_case_result(group: dict, case_row: Optional[dict], bboxes: dict, pdf_urls: dict) -> CaseResult:
     src = group["src"]
     row = case_row or {}
 
@@ -205,7 +206,7 @@ def _build_case_result(group: dict, case_row: Optional[dict], bboxes: dict) -> C
         bench_strength=pick("bench_strength"),
         acts_cited=pick("acts_cited", []) or [],
         sections_cited=pick("sections_cited", []) or [],
-        pdf_url=supabase_service.get_pdf_signed_url(group["case_id"]),
+        pdf_url=pdf_urls.get(group["case_id"]),
         score=group["score"],
         matched_chunks=chunks,
     )
@@ -247,35 +248,61 @@ def search(
         logger.error(f"❌ query embedding failed: {e}", exc_info=True)
         query_vector = None
 
-    try:
-        # OpenSearch collapses chunk hits onto distinct case_ids itself (see
-        # opensearch_service.search()) and paginates the collapsed result set
-        # directly — `case_groups` below is already exactly this page, no
-        # client-side slicing needed.
-        hits, total_distinct_cases = opensearch_service.search(
-            query_vector=query_vector, filters=filters, page=page, limit=limit
+    # search() and facets() are independent OpenSearch round-trips (facets
+    # only needs query_vector/filters, never search's output) — run them
+    # concurrently so a remote OpenSearch host (network latency, not CPU)
+    # only costs one round-trip's worth of wall-clock time, not two.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        search_future = pool.submit(
+            opensearch_service.search,
+            query_vector=query_vector, filters=filters, page=page, limit=limit,
         )
-        logger.info(f"📡 OpenSearch returned {len(hits)} cases (of {total_distinct_cases} matching)")
-    except Exception as e:
-        logger.error(f"❌ OpenSearch search failed: {e}", exc_info=True)
-        raise HTTPException(status_code=502, detail="Search backend unavailable")
+        facets_future = pool.submit(
+            opensearch_service.facets, query_vector=query_vector, filters=filters
+        )
+
+        try:
+            # OpenSearch collapses chunk hits onto distinct case_ids itself (see
+            # opensearch_service.search()) and paginates the collapsed result set
+            # directly — `case_groups` below is already exactly this page, no
+            # client-side slicing needed.
+            hits, total_distinct_cases = search_future.result()
+            logger.info(f"📡 OpenSearch returned {len(hits)} cases (of {total_distinct_cases} matching)")
+        except Exception as e:
+            logger.error(f"❌ OpenSearch search failed: {e}", exc_info=True)
+            raise HTTPException(status_code=502, detail="Search backend unavailable")
+
+        facets_raw = facets_future.result()
 
     case_groups = _hits_to_case_groups(hits)
 
     case_ids = [g["case_id"] for g in case_groups]
     chunk_ids = [c["chunk_id"] for g in case_groups for c in g["chunks"] if c["chunk_id"]]
-    cases = supabase_service.get_cases_by_ids(case_ids)
-    bboxes = supabase_service.get_chunk_bboxes_by_ids(chunk_ids)
 
-    results = [_build_case_result(g, cases.get(g["case_id"]), bboxes) for g in case_groups]
+    # suppressed_matches() needs case_ids (search's output) to know which
+    # strong matches are already shown vs. hidden, so it can't start until
+    # search() resolves — but it doesn't depend on the Supabase lookups or
+    # on each other, so these four run concurrently here instead. The signed-URL
+    # batch in particular replaces a per-result loop of ~10 serial Storage round
+    # trips (~3s) with a single batched call (~0.17s) — the dominant warm-latency
+    # cost before this change.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        cases_future = pool.submit(supabase_service.get_cases_by_ids, case_ids)
+        bboxes_future = pool.submit(supabase_service.get_chunk_bboxes_by_ids, chunk_ids)
+        pdf_urls_future = pool.submit(supabase_service.get_pdf_signed_urls, case_ids)
+        suppressed_future = pool.submit(
+            opensearch_service.suppressed_matches,
+            query_vector=query_vector, filters=filters, result_case_ids=set(case_ids),
+        )
 
-    suppressed_raw = opensearch_service.suppressed_matches(
-        query_vector=query_vector, filters=filters,
-        result_case_ids=set(case_ids),
-    )
+        cases = cases_future.result()
+        bboxes = bboxes_future.result()
+        pdf_urls = pdf_urls_future.result()
+        suppressed_raw = suppressed_future.result()
+
+    results = [_build_case_result(g, cases.get(g["case_id"]), bboxes, pdf_urls) for g in case_groups]
     suppressed = [SuppressedCase(**s) for s in suppressed_raw]
-
-    facets = _attach_facet_labels(Facets(**opensearch_service.facets(query_vector=query_vector, filters=filters)))
+    facets = _attach_facet_labels(Facets(**facets_raw))
 
     took_ms = (time.time() - start) * 1000.0
 

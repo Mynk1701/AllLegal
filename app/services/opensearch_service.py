@@ -41,6 +41,12 @@ class OpenSearchService:
             use_ssl=settings.OPENSEARCH_USE_SSL,
             verify_certs=settings.OPENSEARCH_VERIFY_CERTS,
             ssl_show_warn=False,
+            # search() + facets() + suppressed_matches() now issue concurrent
+            # requests (see search.py thread pools); size the connection pool to
+            # match so they reuse sockets instead of opening throwaway ones
+            # ("Connection pool is full, discarding connection" with the default 1).
+            # NB: opensearch-py's kwarg is `pool_maxsize`, not urllib3's `maxsize`.
+            pool_maxsize=8,
         )
         self.index = settings.OPENSEARCH_INDEX
 

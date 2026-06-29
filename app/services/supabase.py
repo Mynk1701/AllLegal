@@ -105,6 +105,36 @@ class SupabaseService:
             logger.warning(f"⚠️ signed URL failed for {case_id}: {str(e)}")
             return None
 
+    def get_pdf_signed_urls(
+        self, case_ids: List[str], expiry: Optional[int] = None
+    ) -> Dict[str, Optional[str]]:
+        """Batch-mint signed URLs for many case_pdfs/<case_id>.pdf in ONE request.
+
+        /search needs a signed URL per result; calling get_pdf_signed_url() in a
+        loop is one Supabase Storage round trip *per case* (~10 serial calls on a
+        full result page — measured ~3s). Storage's `create_signed_urls` (plural)
+        mints them all in a single request (~0.17s). Returns {case_id: url|None};
+        a per-path error degrades that one case to None, never the whole page.
+        """
+        if not case_ids:
+            return {}
+        paths = [settings.PDF_PATH_TEMPLATE.format(case_id=cid) for cid in case_ids]
+        path_to_case = dict(zip(paths, case_ids))
+        out: Dict[str, Optional[str]] = {cid: None for cid in case_ids}
+        try:
+            resp = self.admin.storage.from_(settings.PDF_BUCKET).create_signed_urls(
+                paths, expiry or settings.PDF_SIGNED_URL_EXPIRY
+            )
+            for item in (resp or []):
+                cid = path_to_case.get(item.get("path"))
+                if cid is None or item.get("error"):
+                    continue
+                out[cid] = item.get("signedURL") or item.get("signedUrl")
+            return out
+        except Exception as e:
+            logger.warning(f"⚠️ batch signed URLs failed ({len(case_ids)} cases): {str(e)}")
+            return out
+
     def log_search(
         self,
         search_id: str,
