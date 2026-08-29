@@ -53,11 +53,20 @@ class Settings(BaseSettings):
     # through page 5 of a 50-case corpus). Only falls back to an approximate
     # top-k once the matching set exceeds the ceiling — a deliberately huge,
     # unfiltered, full-corpus query. See opensearch_service.search().
-    KNN_K_CEILING: int = 5000
+    #
+    # Sized against Lucene-HNSW latency on the 465k-chunk corpus: k scales the
+    # candidate pool an unfiltered query walks, so warm /search latency is ~linear
+    # in this ceiling (k=5000 ~3.3s, k=1500 ~1.7s, k=500 ~0.8s, measured). 1500
+    # covers ~500 distinct cases at 3 chunks/case — far deeper than real
+    # pagination — while keeping every unfiltered query comfortably under the
+    # client read timeout even when the OS page cache is cold. Raise only if
+    # deep-pagination recall on huge unfiltered result sets matters more than tail
+    # latency (and give the VM more RAM for page cache first).
+    KNN_K_CEILING: int = 1500
 
     # Redis Configuration
     REDIS_URL: str = "redis://localhost:6379/0"
-    
+
     # Supabase/Auth Configuration
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
