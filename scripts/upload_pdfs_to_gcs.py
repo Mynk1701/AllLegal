@@ -1,29 +1,32 @@
 """
-Upload case PDFs to the Supabase Storage bucket `case_pdfs`, named `{case_id}.pdf`.
+Upload case PDFs to the GCS bucket, named `{case_id}.pdf`.
 
-Why this works (Option 1 — name-by-case_id, no DB mapping table):
-  - case_id is a stable hash; every pipeline artifact is already keyed by it.
-  - output/01_extracted/{case_id}.json carries `source_filename`, the original
-    PDF basename (no extension, no year folder).
-  - The PDF itself lives somewhere under PDF_INPUT_DIR (recursive; same corpus
-    root as pipeline_runner/stage_01_extract.py).
-  - We upload it as  case_pdfs/{case_id}.pdf  so the API can derive the object
-    path from case_id directly (PDF_PATH_TEMPLATE = "{case_id}.pdf").
+Companion to upload_pdfs_to_supabase.py — same discovery/matching logic
+(Option 1 — name-by-case_id, no DB mapping table), retargeted at Google
+Cloud Storage because Supabase's free/current tier (5GB) is smaller than
+the ~11GB corpus. See HANDOVER.md and the project_opensearch_gcp_migration
+memory for why this move is happening.
 
-This script lives in client/ but reads the pipeline output + PDFs from the
-PARENT repo (one level up from client/). Creds come from client/.env.
+Auth: GCS HMAC interoperability keys (GCS_HMAC_ACCESS_KEY / GCS_HMAC_SECRET_KEY),
+not a service-account JSON key — an org policy on this project
+(iam.disableServiceAccountKeyCreation) blocks both service-account keys and
+service-account HMAC keys; a user-account HMAC key (Cloud Storage → Settings →
+Interoperability → "Access keys for your user account") isn't covered by that
+constraint. GCS's XML API is S3-compatible, so boto3 talks to it directly via
+the endpoint_url override below — no google-cloud-storage SDK needed.
 
 Requirements:
-    pip install supabase python-dotenv
-client/.env must contain (service-role key — uploads bypass RLS):
-    SUPABASE_URL=...
-    SUPABASE_SERVICE_ROLE_KEY=...
+    pip install boto3 tqdm python-dotenv
+client/.env must contain:
+    GCS_BUCKET=...
+    GCS_HMAC_ACCESS_KEY=...
+    GCS_HMAC_SECRET_KEY=...
 
 Usage (from client/):
-    python scripts/upload_pdfs_to_supabase.py --dry-run     # report coverage, upload nothing
-    python scripts/upload_pdfs_to_supabase.py               # upload all
-    python scripts/upload_pdfs_to_supabase.py --limit 20    # try a small batch first
-    python scripts/upload_pdfs_to_supabase.py --skip-existing
+    python scripts/upload_pdfs_to_gcs.py --dry-run     # report coverage, upload nothing
+    python scripts/upload_pdfs_to_gcs.py               # upload all
+    python scripts/upload_pdfs_to_gcs.py --limit 20    # try a small batch first
+    python scripts/upload_pdfs_to_gcs.py --skip-existing
 """
 from __future__ import annotations
 
@@ -41,7 +44,7 @@ DATA_ROOT = Path(__file__).resolve().parents[2]     # repo root (parent of clien
 EXTRACTED_DIR = DATA_ROOT / "output" / "01_extracted"
 # NOTE: must track pipeline_runner/stage_01_extract.py's PDF_INPUT_DIR.
 PDF_INPUT_DIR = DATA_ROOT / "supreme_court_judgements" / "supreme_court_judgments"
-BUCKET = "case_pdfs"
+GCS_ENDPOINT = "https://storage.googleapis.com"
 
 load_dotenv(CLIENT_ROOT / ".env")
 
@@ -84,20 +87,13 @@ def build_pairs(limit: int | None) -> tuple[list[tuple[str, Path]], list[str]]:
     return pairs, unresolved
 
 
-def existing_object_names(client) -> set[str]:
+def existing_object_names(client, bucket: str) -> set[str]:
     """Paginate the bucket listing so --skip-existing works on large buckets."""
     names: set[str] = set()
-    offset, page = 0, 1000
-    while True:
-        batch = client.storage.from_(BUCKET).list(
-            options={"limit": page, "offset": offset}
-        )
-        if not batch:
-            break
-        names.update(obj["name"] for obj in batch)
-        if len(batch) < page:
-            break
-        offset += page
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket):
+        for obj in page.get("Contents", []):
+            names.add(obj["Key"])
     return names
 
 
@@ -109,17 +105,18 @@ def main() -> int:
     ap.add_argument("--skip-existing", action="store_true", help="skip objects already in the bucket")
     args = ap.parse_args()
 
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-    if not url or not key:
-        sys.exit("❌ Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in client/.env")
+    bucket = os.environ.get("GCS_BUCKET")
+    access_key = os.environ.get("GCS_HMAC_ACCESS_KEY")
+    secret_key = os.environ.get("GCS_HMAC_SECRET_KEY")
+    if not bucket or not access_key or not secret_key:
+        sys.exit("❌ Set GCS_BUCKET, GCS_HMAC_ACCESS_KEY and GCS_HMAC_SECRET_KEY in client/.env")
     if not EXTRACTED_DIR.is_dir():
         sys.exit(f"❌ Missing {EXTRACTED_DIR}")
 
     try:
-        from supabase import create_client
+        import boto3
     except ImportError:
-        sys.exit("❌ supabase not installed — run: pip install supabase python-dotenv")
+        sys.exit("❌ boto3 not installed — run: pip install boto3 tqdm")
 
     pairs, unresolved = build_pairs(args.limit)
     print(f"\n📂 {len(pairs)} PDFs resolved, {len(unresolved)} unresolved.")
@@ -130,20 +127,36 @@ def main() -> int:
     if not pairs:
         return 0
 
-    client = create_client(url, key)
+    from botocore.config import Config
+
+    client = boto3.client(
+        "s3",
+        endpoint_url=GCS_ENDPOINT,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        # botocore >=1.36 defaults to attaching an AWS-specific flexible
+        # checksum on PutObject, which GCS's S3-compatible XML API doesn't
+        # recognize the same way -> SignatureDoesNotMatch. Restore the old
+        # "only when required" behavior so the signature matches.
+        config=Config(
+            request_checksum_calculation="when_required",
+            response_checksum_validation="when_required",
+        ),
+    )
 
     if args.skip_existing:
-        have = existing_object_names(client)
+        have = existing_object_names(client, bucket)
         before = len(pairs)
         pairs = [(c, p) for c, p in pairs if f"{c}.pdf" not in have]
         print(f"⏭️  skipping {before - len(pairs)} already in bucket; {len(pairs)} to upload")
 
     def upload(case_id: str, pdf: Path) -> int:
         data = pdf.read_bytes()
-        client.storage.from_(BUCKET).upload(
-            f"{case_id}.pdf",
-            data,
-            {"content-type": "application/pdf", "upsert": "true"},
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{case_id}.pdf",
+            Body=data,
+            ContentType="application/pdf",
         )
         return len(data)
 
