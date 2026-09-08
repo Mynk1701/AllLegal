@@ -223,27 +223,6 @@ class Annotation(BaseModel):
     updated_at: Optional[datetime] = None
 
 
-# ==================== Authentication Schemas ====================
-
-class LoginRequest(BaseModel):
-    """Schema for login request"""
-    email: str = Field(..., description="User email address")
-    password: str = Field(..., min_length=6, description="User password")
-
-
-class SignUpRequest(BaseModel):
-    """Schema for sign up request"""
-    email: str = Field(..., description="User email address")
-    password: str = Field(..., min_length=6, description="User password")
-
-
-class AuthResponse(BaseModel):
-    """Schema for authentication response"""
-    access_token: str = Field(..., description="JWT access token")
-    user_id: str = Field(..., description="User ID")
-    message: str = Field(default="Authentication successful")
-
-
 # ==================== Error Response ====================
 
 class ErrorResponse(BaseModel):

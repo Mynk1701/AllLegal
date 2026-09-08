@@ -34,62 +34,18 @@ class SupabaseService:
         except Exception as e:
             logger.error(f"❌ Failed to initialize Supabase: {str(e)}")
             raise
-    
+
     # ==================== Authentication ====================
     # JWT verification is NOT done here. It lives in a single place —
     # app/core/security.py get_current_user(), which validates Supabase's
     # asymmetric tokens via JWKS (ES256). The previous HS256 + SUPABASE_JWT_SECRET
     # path that lived here was dead code AND wrong for modern Supabase (which
     # signs with rotating asymmetric keys, not the legacy shared secret), so it
-    # was removed to keep one source of truth.
+    # was removed to keep one source of truth. sign_up/sign_in were removed too
+    # — their only caller, the REST /api/auth/* routes, was unused dead code
+    # the frontend never called (it talks to Supabase directly via server
+    # actions), so it was deleted as well.
 
-    def sign_up(self, email: str, password: str) -> Optional[Dict]:
-        """
-        Register a new user with Supabase.
-        
-        Args:
-            email: User email
-            password: User password (min 6 chars)
-            
-        Returns:
-            User data or None if failed
-        """
-        try:
-            response = self.client.auth.sign_up({
-                "email": email,
-                "password": password
-            })
-            logger.info(f"✅ User registered: {email}")
-            return response.user.__dict__ if response.user else None
-        except Exception as e:
-            logger.error(f"❌ Sign up failed: {str(e)}")
-            return None
-    
-    def sign_in(self, email: str, password: str) -> Optional[Dict]:
-        """
-        Sign in existing user.
-        
-        Args:
-            email: User email
-            password: User password
-            
-        Returns:
-            Session data with access_token or None if failed
-        """
-        try:
-            response = self.client.auth.sign_in_with_password({
-                "email": email,
-                "password": password
-            })
-            logger.info(f"✅ User signed in: {email}")
-            return {
-                "access_token": response.session.access_token,
-                "user_id": response.user.id if response.user else None
-            }
-        except Exception as e:
-            logger.error(f"❌ Sign in failed: {str(e)}")
-            return None
-    
     # ==================== Search Enrichment (OpenSearch -> Supabase) ====================
 
     def get_cases_by_ids(self, case_ids: List[str]) -> Dict[str, Dict]:

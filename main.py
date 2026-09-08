@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 import time
-from app.api.routes import search, auth, cases, groups
+from app.api.routes import search, cases, groups
 from app.core.config import settings
 
 # 1. Setup Global Logging
@@ -59,7 +59,6 @@ app.add_middleware(
 # Include routers
 app.include_router(search.router, prefix="/api", tags=["search"])
 app.include_router(cases.router, prefix="/api", tags=["cases"])
-app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(groups.router, prefix="/api", tags=["groups"])
 
 # Root

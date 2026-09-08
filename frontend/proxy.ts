@@ -48,6 +48,7 @@ export async function proxy(request: NextRequest) {
     pathname === '/' ||
     pathname.startsWith('/login') ||
     pathname.startsWith('/signup') ||
+    pathname.startsWith('/forgot-password') ||
     pathname.startsWith('/auth')
 
   // Guests: bounce anything that isn't public to the login page.
@@ -59,7 +60,7 @@ export async function proxy(request: NextRequest) {
 
   // Signed-in users have no business on the marketing or auth pages — drop them
   // straight into the app.
-  if (user && (pathname === '/' || pathname.startsWith('/login') || pathname.startsWith('/signup'))) {
+  if (user && (pathname === '/' || pathname.startsWith('/login') || pathname.startsWith('/signup') || pathname.startsWith('/forgot-password'))) {
     const url = request.nextUrl.clone()
     url.pathname = '/search'
     return NextResponse.redirect(url)

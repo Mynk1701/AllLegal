@@ -1,12 +1,21 @@
 'use client';
 
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Scale, Mail, Lock, AlertCircle, Loader2, Zap, ShieldCheck, Eye, EyeOff } from 'lucide-react';
 import { login } from '../auth/actions';
 
 export default function LoginPage() {
-  const [error, setError] = useState('');
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
+  const searchParams = useSearchParams();
+  const [error, setError] = useState(searchParams.get('error') ?? '');
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const router = useRouter();
@@ -115,7 +124,7 @@ export default function LoginPage() {
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center ml-1">
                   <label className="text-sm font-bold text-slate-700">Password</label>
-                  <a href="#" className="text-xs font-bold text-blue-600 hover:text-blue-700">Forgot?</a>
+                  <a href="/forgot-password" className="text-xs font-bold text-blue-600 hover:text-blue-700">Forgot?</a>
                 </div>
                 <div className="relative group">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
@@ -136,17 +145,6 @@ export default function LoginPage() {
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-              </div>
-
-              <div className="flex items-center pt-1">
-                <input
-                  id="remember"
-                  type="checkbox"
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded-md transition-all cursor-pointer"
-                />
-                <label htmlFor="remember" className="ml-2.5 block text-sm font-medium text-slate-600 cursor-pointer">
-                  Keep me logged in
-                </label>
               </div>
 
               <button
