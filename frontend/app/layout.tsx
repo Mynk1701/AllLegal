@@ -5,8 +5,27 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "AllLegal - AI-Powered Indian Legal Search",
-  description: "Next-generation search engine for Indian case law",
+  // metadataBase makes relative OG/twitter image URLs resolve to the real host
+  // instead of localhost when Next renders social preview tags.
+  metadataBase: new URL("https://nirnaylegal.in"),
+  title: "Nirnay Legal — Search Indian case law by meaning",
+  description:
+    "Semantic search across 25,000+ Supreme Court and High Court judgments. Ask a question, get the passages that answer it.",
+  openGraph: {
+    title: "Nirnay Legal — Search Indian case law by meaning",
+    description:
+      "Semantic search across 25,000+ Supreme Court and High Court judgments.",
+    url: "https://nirnaylegal.in",
+    siteName: "Nirnay Legal",
+    locale: "en_IN",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Nirnay Legal — Search Indian case law by meaning",
+    description:
+      "Semantic search across 25,000+ Supreme Court and High Court judgments.",
+  },
 };
 
 export default function RootLayout({

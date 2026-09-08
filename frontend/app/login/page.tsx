@@ -44,7 +44,7 @@ function LoginForm() {
             <div className="p-2 bg-blue-600 rounded-lg">
               <Scale className="w-8 h-8 text-white" />
             </div>
-            <span className="text-2xl font-bold tracking-tight">AllLegal</span>
+            <span className="text-2xl font-bold tracking-tight">Nirnay Legal</span>
           </div>
         </div>
 
@@ -79,7 +79,7 @@ function LoginForm() {
         </div>
 
         <div className="relative z-10">
-          <p className="text-slate-500 text-sm">© 2026 AllLegal Intelligence Systems Pvt Ltd.</p>
+          <p className="text-slate-500 text-sm">© 2026 Nirnay Legal</p>
         </div>
       </div>
 
@@ -152,7 +152,7 @@ function LoginForm() {
                 disabled={isLoading}
                 className="w-full flex justify-center items-center py-3.5 px-4 border border-transparent rounded-xl shadow-xl shadow-blue-500/20 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-500/20 transition-all disabled:opacity-50 active:scale-[0.98]"
               >
-                {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Sign in to AllLegal'}
+                {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Sign in to Nirnay Legal'}
               </button>
             </form>
 

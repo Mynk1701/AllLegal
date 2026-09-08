@@ -9,12 +9,10 @@ class Settings(BaseSettings):
     """
     
     # Application
-    APP_NAME: str = "AllLegal"
-    APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    
+
     # OpenSearch Configuration (chunk-level index `case_chunks`)
     OPENSEARCH_HOST: str = "localhost"
     OPENSEARCH_PORT: int = 9200
@@ -64,19 +62,22 @@ class Settings(BaseSettings):
     # latency (and give the VM more RAM for page cache first).
     KNN_K_CEILING: int = 1500
 
-    # Redis Configuration
-    REDIS_URL: str = "redis://localhost:6379/0"
-
     # Supabase/Auth Configuration
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
 
     # CORS
+    # Every browser origin that may call this API. A missing origin here surfaces
+    # as a CORS error in the browser console while curl/Postman still work — so
+    # add the new host BEFORE pointing DNS at it, not after.
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://localhost:8000",
         "http://127.0.0.1:3000",
+        "https://nirnaylegal.in",
+        "https://www.nirnaylegal.in",
+        # Vercel's generated URL — kept so preview/rollback deploys keep working.
         "https://frontend-seven-tau-89.vercel.app",
     ]
     

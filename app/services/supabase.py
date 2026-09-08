@@ -190,6 +190,87 @@ class SupabaseService:
             logger.error(f"❌ get_search_history failed: {str(e)}")
             return []
 
+    # ==================== Billing / usage tiers ====================
+    # `profiles` (one row per auth.users id) is the source of truth for a user's
+    # tier + subscription state. Rows are auto-created by a Supabase trigger on
+    # signup; the get_profile() insert below is a defensive fallback only.
+
+    def get_profile(self, user_id: str) -> Dict[str, Any]:
+        """Fetch a user's billing profile, creating a default `free` row if missing."""
+        try:
+            resp = self.admin.table("profiles").select("*").eq("user_id", user_id).limit(1).execute()
+            if resp.data:
+                return resp.data[0]
+            ins = self.admin.table("profiles").insert({"user_id": user_id}).execute()
+            return ins.data[0] if ins.data else {"user_id": user_id, "tier": "free"}
+        except Exception as e:
+            logger.error(f"❌ get_profile failed: {str(e)}")
+            # Fail OPEN as free-tier so a Supabase blip never grants unlimited access.
+            return {"user_id": user_id, "tier": "free"}
+
+    def count_searches_since(self, user_id: str, since_iso: str) -> int:
+        """Count this user's searches logged at/after `since_iso` — the quota ledger."""
+        try:
+            resp = (
+                self.admin.table("search_logs")
+                .select("search_id", count="exact")
+                .eq("user_id", user_id)
+                .gte("created_at", since_iso)
+                .execute()
+            )
+            return resp.count or 0
+        except Exception as e:
+            logger.error(f"❌ count_searches_since failed: {str(e)}")
+            # Fail OPEN (0 used) — a counting error must never wrongly block a user.
+            return 0
+
+    def update_subscription(
+        self,
+        user_id: str,
+        *,
+        tier: Optional[str] = None,
+        provider: Optional[str] = None,
+        provider_customer_id: Optional[str] = None,
+        provider_subscription_id: Optional[str] = None,
+        subscription_status: Optional[str] = None,
+        current_period_end: Optional[str] = None,
+    ) -> bool:
+        """Upsert subscription state onto the user's profile. Only non-None fields
+        are written, so a `created`-status subscribe call doesn't clobber tier and a
+        renewal webhook doesn't clobber the customer id."""
+        row: Dict[str, Any] = {
+            "user_id": user_id,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        for key, val in (
+            ("tier", tier),
+            ("provider", provider),
+            ("provider_customer_id", provider_customer_id),
+            ("provider_subscription_id", provider_subscription_id),
+            ("subscription_status", subscription_status),
+            ("current_period_end", current_period_end),
+        ):
+            if val is not None:
+                row[key] = val
+        try:
+            self.admin.table("profiles").upsert(row, on_conflict="user_id").execute()
+            return True
+        except Exception as e:
+            logger.error(f"❌ update_subscription failed: {str(e)}")
+            return False
+
+    def set_tier(self, user_id: str, tier: str) -> bool:
+        """Force a user's tier (used by scripts/set_tier.py to comp internal testers)."""
+        try:
+            self.admin.table("profiles").upsert(
+                {"user_id": user_id, "tier": tier, "updated_at": datetime.now(timezone.utc).isoformat()},
+                on_conflict="user_id",
+            ).execute()
+            return True
+        except Exception as e:
+            logger.error(f"❌ set_tier failed: {str(e)}")
+            return False
+
     # ==================== Groups & Annotations (PDF reader) ====================
     # The service-role client bypasses RLS, so EVERY method here is scoped by the
     # caller's user_id (groups/annotations) or by a parent group the caller owns

@@ -1,49 +1,30 @@
-version: '3.8'
+# LOCAL DEVELOPMENT ONLY — a throwaway OpenSearch for running the API on your machine.
+#
+# The app falls back to OPENSEARCH_HOST=localhost / port 9200 / no auth (see
+# app/core/config.py), so `docker compose up -d` plus an index load is all that a
+# local backend needs. Nothing else here: Supabase is hosted (no local Postgres),
+# and the app has no cache layer.
+#
+# NOT production. Production is a single-node cluster on GCE with the security
+# plugin ON — see deploy/gcp/. Never copy `DISABLE_SECURITY_PLUGIN=true` out of
+# this file: an open, no-auth cluster reachable from the internet was wiped twice
+# by ransomware bots in June 2026 (write-up in deploy/oracle/README.md). It is
+# only acceptable here because this listener is bound to your own machine.
+#
+# Create the index after first start with the mapping the app expects:
+#   deploy/gcp/case_chunks_v2.json  (adjust the URL/auth for a plain local cluster)
 
 services:
-  # PostgreSQL Database (used by Supabase)
-  postgres:
-    image: postgres:15-alpine
-    container_name: alllegal_postgres
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: alllegal
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Redis for caching and async tasks
-  redis:
-    image: redis:7-alpine
-    container_name: alllegal_redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # OpenSearch for Hybrid Semantic Search (Matching Co-founder's config)
   opensearch:
-    image: opensearchproject/opensearch:2.19.5
-    container_name: law-opensearch
+    image: opensearchproject/opensearch:2.19.5   # pin matches production (deploy/gcp)
+    container_name: law-opensearch-dev
     ports:
       - "9200:9200"
     environment:
       - cluster.name=law-helper-dev
       - node.name=opensearch-node1
       - discovery.type=single-node
-      - DISABLE_SECURITY_PLUGIN=true
+      - DISABLE_SECURITY_PLUGIN=true             # local only — see the warning above
       - "OPENSEARCH_JAVA_OPTS=-Xms1500m -Xmx1500m"
       - knn.memory.circuit_breaker.enabled=true
       - knn.memory.circuit_breaker.limit=60%
@@ -58,7 +39,10 @@ services:
       - opensearch_opensearch-data:/usr/share/opensearch/data
 
 volumes:
-  postgres_data:
-  redis_data:
+  # Name and `external: true` are load-bearing — do NOT rename. Compose would
+  # then create a fresh EMPTY volume and the cluster would come up with zero
+  # documents while looking perfectly healthy (that exact mistake cost ~20h in
+  # production on 2026-06-24; see deploy/oracle/README.md).
+  # Create it once with: docker volume create opensearch_opensearch-data
   opensearch_opensearch-data:
     external: true
