@@ -10,3 +10,4 @@ python-multipart==0.0.6
 PyJWT==2.8.0
 cryptography>=41.0.0
 supabase==2.0.3
+boto3>=1.36,<2.0   # >=1.36 needed for botocore's request_checksum_calculation Config option (GCS compat)
