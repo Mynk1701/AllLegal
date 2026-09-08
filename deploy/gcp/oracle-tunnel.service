@@ -1,0 +1,54 @@
+# SSH tunnel: GCP VM localhost:9201 -> Oracle VM localhost:9200
+#
+# WHY THIS EXISTS (migration only — delete after Oracle is decommissioned)
+# ----------------------------------------------------------------------
+# migrate_index.py has to read the live Oracle cluster. The documented plan
+# opened OCI port 9200 to the GCP VM's IP, but that rule would not take effect:
+# with 34.187.155.254/32 saved and visible in the security list, tcpdump on the
+# Oracle host captured ZERO packets across repeated attempts, while the same
+# list correctly allowed Render's CIDRs and correctly blocked an unlisted IP.
+# The rule was accepted by the console and never enforced.
+#
+# Port 22 was reachable from the GCP VM throughout, so the copy runs over SSH
+# instead. That is the better end state anyway:
+#   - nothing new is exposed to the internet
+#   - traffic is encrypted end to end
+#   - there is no temporary firewall hole to remember to close afterwards
+#
+# Requires /home/sarit/oracle-key (the Oracle private key, chmod 600).
+# DELETE that key and disable this unit once the migration is verified:
+#   sudo systemctl disable --now oracle-tunnel.service && rm ~/oracle-key
+#
+# Install:
+#   sudo cp oracle-tunnel.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now oracle-tunnel
+# Verify (auto-restart is proven, not assumed):
+#   sudo pkill -f 9201:localhost:9200 && sleep 12 && systemctl is-active oracle-tunnel
+
+[Unit]
+Description=SSH tunnel to Oracle OpenSearch (localhost:9201 -> Oracle localhost:9200)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sarit
+# -N: forward only, no remote command.
+# ExitOnForwardFailure: a bind failure becomes a hard error rather than a
+# silently useless tunnel that the migration would then time out against.
+# ServerAlive*: drop and restart a dead link within ~90s instead of hanging
+# for the duration of a multi-hour copy.
+ExecStart=/usr/bin/ssh -N \
+  -i /home/sarit/oracle-key \
+  -o StrictHostKeyChecking=no \
+  -o UserKnownHostsFile=/home/sarit/.ssh/known_hosts \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=3 \
+  -o TCPKeepAlive=yes \
+  -L 127.0.0.1:9201:localhost:9200 \
+  opc@80.225.202.124
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

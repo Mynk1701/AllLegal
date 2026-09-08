@@ -1,468 +1,157 @@
-# AllLegal - Legal Case Search API
+# AllLegal — semantic search over Indian case law
 
-A production-grade **FastAPI** application for searching Indian legal cases with fast boolean queries using **OpenSearch** and **Supabase** authentication.
+A FastAPI backend and Next.js frontend for searching ~25,000 Supreme Court and
+High Court judgments by **meaning**, not keywords. A lawyer types a question and
+gets back the passages that actually answer it, grouped by case, with the source
+PDF and page highlights.
 
-## 🎯 Problem Statement
-
-Indian legal research apps have major issues:
-
-- **Poor Interfaces**: Difficult navigation and UX
-- **High Costs**: Expensive subscriptions
-- **Limited Search**: No true boolean search capabilities
-
-**AllLegal Solution:**
-
-- Extract metadata from legal case PDFs
-- Index cases in OpenSearch for fast boolean search
-- Modern, type-safe API
-- Supabase for auth and database
-- Scalable production architecture
+Search is vector (kNN) retrieval over chunk-level embeddings in OpenSearch.
+Filters bound the search; the query ranks within it.
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│         FastAPI Application                 │
-│  (Type-safe endpoints with Pydantic)        │
-└────────────────────┬────────────────────────┘
-                     │
-      ┌──────────────┼──────────────┐
-      │              │              │
-      ▼              ▼              ▼
-┌─────────┐   ┌─────────────┐   ┌──────────┐
-│Supabase │   │OpenSearch   │   │  Redis   │
-│(Auth &  │   │(Search)     │   │(Cache)   │
-│Database)│   │             │   │          │
-└─────────┘   └─────────────┘   └──────────┘
+Next.js (Vercel)  ──▶  FastAPI (Render)  ──┬──▶  OpenSearch (GCE, deploy/gcp)
+                                            │      chunk index + kNN + facets
+                                            ├──▶  Supabase
+                                            │      auth (JWT), case metadata,
+                                            │      groups, annotations, search
+                                            │      logs, PDF storage
+                                            └──▶  Voyage AI
+                                                   query embeddings
+```
+
+Judgments are ingested by a **separate** repository, `legal-engine` (a submodule
+here), which extracts, labels, chunks, embeds and indexes PDFs. This repo only
+*reads* that index — it never writes to it.
+
+### How a search works
+
+1. The query is embedded with Voyage `voyage-law-2` (`input_type="query"` — the
+   model is asymmetric and the pipeline indexed with `"document"`).
+2. OpenSearch runs a `knn` query over `chunk_embedding`, with any active filters
+   pushed *inside* the kNN clause as a pre-filter, so filtering never causes a
+   recall cliff.
+3. `collapse` on `case_id` with `inner_hits` deduplicates chunks into cases
+   inside OpenSearch, so `from`/`size` paginate cases rather than chunks.
+4. Facets are query-aware and drill-down: each facet excludes its own selection,
+   and counts are distinct *cases* via a `cardinality` sub-aggregation.
+5. Suppression re-runs the query unfiltered to surface strong matches the filters
+   are hiding, naming which filter excludes them.
+
+Details and the reasoning behind each choice are in the module docstrings of
+`app/services/opensearch_service.py` and `app/api/routes/search.py`.
+
+---
+
+## Tech stack
+
+| Component | Technology |
+|---|---|
+| API | FastAPI + Pydantic (typed request/response models) |
+| Search | OpenSearch 2.19.5, Lucene HNSW k-NN, 1024-dim vectors |
+| Embeddings | Voyage AI `voyage-law-2` |
+| Auth | Supabase JWT, verified against the project JWKS (ES256) |
+| Data | Supabase Postgres + Supabase Storage (case PDFs) |
+| Billing | Razorpay subscriptions |
+| Frontend | Next.js (App Router) + Tailwind |
+
+---
+
+## Repository layout
+
+```
+app/
+  api/routes/     search, cases, groups, billing endpoints
+  core/           config (env-driven settings), security (JWT), quota, tiers
+  services/       opensearch, embeddings, supabase, billing providers, case_index
+  schemas/        Pydantic request/response models
+deploy/gcp/       production OpenSearch: compose, index mapping, migration, backups
+deploy/oracle/    the predecessor host — kept for its two incident write-ups
+frontend/         Next.js app
+scripts/          one-off operational scripts (tier changes, PDF upload, user cleanup)
+vendor/           statute_index + annotatedCentralActs, vendored so deploys that
+                  cannot clone the private legal-engine submodule still work
+legal-engine/     git submodule — the ingestion pipeline (separate repo)
 ```
 
 ---
 
-## ⚡ Tech Stack
-
-| Component       | Technology            | Purpose                          |
-| --------------- | --------------------- | -------------------------------- |
-| **Framework**   | FastAPI               | Modern, fast web framework       |
-| **Database**    | Supabase + PostgreSQL | Case metadata storage            |
-| **Auth**        | Supabase JWT          | User authentication              |
-| **Search**      | OpenSearch            | Fast boolean searching           |
-| **Cache**       | Redis                 | Performance optimization         |
-| **Type Safety** | Pydantic              | All requests/responses validated |
-| **Container**   | Docker Compose        | Local dev environment            |
-
----
-
-## 🚀 Quick Start (Windows)
-
-### 1️⃣ Setup Virtual Environment
-
-```batch
-setup.bat
-```
-
-This automatically:
-
-- Creates Python virtual environment
-- Installs all dependencies
-- Creates required directories
-
-### 2️⃣ Update Supabase Credentials
-
-Edit `.env` file with your Supabase project details:
-
-```env
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-SUPABASE_JWT_SECRET=your-jwt-secret
-```
-
-**Get Supabase credentials:**
-
-1. Go to https://app.supabase.com
-2. Create new project
-3. Go to Settings → API Keys
-4. Copy the keys to `.env`
-
-### 3️⃣ Start Services
+## Quick start
 
 ```bash
-docker-compose up
+./setup.sh            # or setup.bat on Windows: venv + pip + npm install
+cp .env.example .env  # then fill in Supabase + Voyage credentials
+docker compose up -d  # local OpenSearch on :9200 (dev only, no auth)
+python main.py        # API on :8000
+cd frontend && npm run dev
 ```
 
-This starts 4 services:
+`.env.example` lists every key the app reads. Anything with a working default
+lives in `app/core/config.py` instead.
 
-- **PostgreSQL** (port 5432) - Database
-- **Redis** (port 6379) - Cache
-- **OpenSearch** (port 9200) - Search engine
-- **Dashboards** (port 5601) - Search visualization
-
-### 4️⃣ Activate Virtual Environment
-
-```bash
-venv\Scripts\activate.bat
-```
-
-### 5️⃣ Run Application
-
-```bash
-uvicorn main:app --reload
-```
-
-✅ App is now running at **http://localhost:8000**
+A fresh local OpenSearch starts **empty** — search will return nothing until an
+index exists. Create it with the mapping in `deploy/gcp/case_chunks_v2.json` and
+load data via the `legal-engine` pipeline.
 
 ---
 
-## 📚 API Documentation
+## API
 
-Interactive Swagger UI: **http://localhost:8000/docs**
+All endpoints are under `/api` and require a Supabase JWT bearer token, except
+`/api/billing/webhook` (verified by Razorpay HMAC signature instead).
 
-### 🔍 Search Endpoint
+| Endpoint | Purpose |
+|---|---|
+| `GET /search` | Semantic + filtered search → case-grouped results, facets, suppressed matches. **Metered** against the caller's tier quota. |
+| `GET /facets` | Query-aware drill-down filter options (first paint / standalone) |
+| `GET /search/history` | The caller's past search definitions, de-duplicated |
+| `GET /search/health` | OpenSearch connectivity |
+| `GET /cases/{case_id}` | Full case detail: all chunks in order, metadata, PDF URL |
+| `GET/POST/DELETE /groups...` | Case groups, their items, and annotations |
+| `GET /billing/me` | Current tier, usage, and limit |
+| `GET /billing/tiers` | Purchasable tiers |
+| `POST /billing/subscribe` | Start a Razorpay subscription |
+| `POST /billing/webhook` | Razorpay events — the source of truth for tier changes |
 
-```http
-GET /api/search?query=constitution&limit=10
-```
-
-**Parameters:**
-
-- `query` (required): Search term (min 1, max 500 chars)
-- `limit` (optional): Max results (default: 10, max: 100)
-- `Authorization` (optional): Bearer token
-
-**Response:**
-
-```json
-{
-  "query": "constitution",
-  "total_results": 3,
-  "results": [
-    {
-      "case_id": "case_001",
-      "title": "State of Karnataka v. Rishikesh",
-      "court": "Supreme Court of India",
-      "year": 2015,
-      "judge": "Justice R.K. Agarwal",
-      "relevance_score": 0.95,
-      "summary": "Constitutional validity of right to privacy...",
-      "case_number": "Civil Appeal No. 5555"
-    }
-  ],
-  "search_time_ms": 12.5,
-  "timestamp": "2024-03-01T10:30:00"
-}
-```
-
-### 🔐 Authentication
-
-**Login:**
-
-```bash
-curl -X POST "http://localhost:8000/api/auth/login" \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"password123"}'
-```
-
-**Response:**
-
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "user_id": "550e8400-e29b-41d4-a716-446655440000",
-  "message": "Login successful"
-}
-```
-
-**Use token in searches:**
-
-```bash
-curl -X GET "http://localhost:8000/api/search?query=privacy" \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-```
+`GET /search` is the only metered endpoint: `app/core/quota.py` counts
+`search_logs` rows since the start of the calendar month and compares against the
+tier's limit.
 
 ---
 
-## 📁 Project Structure
+## Tiers
 
-```
-AllLegal/
-├── main.py                          # FastAPI app entry point
-├── requirements.txt                 # Dependencies
-├── .env                            # Configuration (update with Supabase keys)
-├── docker-compose.yml              # Services definition
-├── setup.bat / setup.sh            # Setup scripts
-│
-├── app/
-│   ├── core/
-│   │   ├── config.py              # Type-safe Pydantic settings
-│   │   └── __init__.py
-│   │
-│   ├── services/
-│   │   ├── supabase.py            # Supabase client (auth, database)
-│   │   ├── opensearch.py          # OpenSearch client (search)
-│   │   ├── pdf.py                 # PDF text extraction
-│   │   └── __init__.py
-│   │
-│   ├── schemas/
-│   │   ├── schemas.py             # Pydantic models (type safety)
-│   │   └── __init__.py
-│   │
-│   ├── api/
-│   │   └── routes/
-│   │       ├── search.py          # /api/search endpoint
-│   │       ├── auth.py            # /api/auth endpoints
-│   │       └── __init__.py
-│   │
-│   └── __init__.py
-│
-├── logs/                           # Application logs
-└── uploads/                        # Uploaded PDF files
-```
+Defined in one place — `app/core/tiers.py`. Adding a tier is a single registry
+entry (plus a Supabase CHECK-constraint value and, if paid, a Razorpay plan).
+
+| Tier | Limit | How you get it |
+|---|---|---|
+| `free` | 15 searches / calendar month | default for every new account |
+| `pro` | unlimited | active Razorpay subscription (₹500/month) |
+| `internal` | unlimited | set manually (`scripts/set_tier.py`) |
+
+See `BILLING_SETUP.md` for the Supabase SQL, Razorpay dashboard setup, and the
+end-to-end test plan.
 
 ---
 
-## 🔑 Key Features
+## Deployment
 
-### ✅ Type Safety Everywhere
+| Piece | Where |
+|---|---|
+| Backend | Render (Oregon) |
+| Frontend | Vercel |
+| OpenSearch | Self-hosted single node on GCE `us-west1` — see `deploy/gcp/README.md` |
+| Postgres, auth, PDF storage | Supabase (hosted) |
 
-**Example 1: Configuration**
-
-```python
-from app.core.config import settings
-opensearch_host: str = settings.OPENSEARCH_HOST  # Fully typed
-```
-
-**Example 2: API Response**
-
-```python
-@router.get("/api/search", response_model=SearchResponse)
-async def search(...) -> SearchResponse:
-    # Return type must match SearchResponse schema
-```
-
-**Example 3: Service Method**
-
-```python
-def search(self, query: str, limit: int = 10) -> Tuple[List[Dict], float]:
-    # Types checked for parameters and return value
-```
-
-### 🔐 Supabase Integration
-
-- **Authentication**: JWT tokens via Supabase Auth
-- **Database**: Cases and search logs stored in PostgreSQL
-- **Type Safety**: All database operations type-checked
-
-### 🚀 Production Ready
-
-- ✅ Comprehensive logging with timestamps
-- ✅ Error handling and validation
-- ✅ CORS support for frontend
-- ✅ Health check endpoints
-- ✅ Docker containerization
-- ✅ Environment-based configuration
-
-### 📊 Current Status
-
-**Implemented:**
-
-- ✅ FastAPI project structure
-- ✅ Supabase authentication endpoints
-- ✅ `/api/search` with **hardcoded mock data** (3 test cases)
-- ✅ Type-safe schemas and responses
-- ✅ Docker dev environment
-- ✅ Comprehensive logging
-
-**Next Phase (TODO):**
-
-- 🔄 Replace mock data with real OpenSearch search
-- 📄 Add `/api/upload` endpoint for PDF files
-- 🔄 Extract metadata from uploaded PDFs
-- 📊 Implement case indexing in OpenSearch
-- 💾 Store extracted cases in Supabase
-- 🧪 Add test suite
+`deploy/gcp/README.md` carries the operational runbook: sizing rationale,
+security posture, backup/restore, and the rebuild path.
 
 ---
 
-## 🧪 Testing Search Endpoint
+## Known issues
 
-### Test with cURL
-
-```bash
-# Basic search
-curl "http://localhost:8000/api/search?query=constitution"
-
-# With limit
-curl "http://localhost:8000/api/search?query=privacy&limit=5"
-
-# View API docs
-curl "http://localhost:8000/docs"
-```
-
-### Current Response (Mock Data)
-
-The `/api/search` endpoint currently returns **3 hardcoded legal cases**:
-
-1. **State of Karnataka v. Rishikesh** (2015)
-   - Court: Supreme Court of India
-   - Judge: Justice R.K. Agarwal
-   - Score: 0.95
-
-2. **Right to Information v. Government of India** (2018)
-   - Court: High Court of Delhi
-   - Judge: Justice Manmohan
-   - Score: 0.87
-
-3. **Constitutional Rights - Fundamental Rights Case** (2020)
-   - Court: Supreme Court of India
-   - Judge: Justice D.Y. Chandrachud
-   - Score: 0.92
-
----
-
-## 🛠️ Troubleshooting
-
-### Port Already in Use
-
-```bash
-# Kill process using port 8000 (Windows)
-netstat -ano | findstr :8000
-taskkill /PID <PID> /F
-```
-
-### Supabase Connection Error
-
-```bash
-# Check .env credentials
-# Verify network connectivity
-# Check Supabase project is active
-```
-
-### OpenSearch Not Starting
-
-```bash
-# Increase Docker memory: Settings → Resources → Memory (2GB+)
-# Check Docker logs: docker-compose logs opensearch
-```
-
-### Package Installation Issues
-
-```bash
-# Clear pip cache and reinstall
-pip cache purge
-pip install -r requirements.txt --force-reinstall
-```
-
----
-
-## 📖 Understanding the Code
-
-### 1. **main.py** - Application Entry Point
-
-```python
-from fastapi import FastAPI
-app = FastAPI(...)  # Create app
-app.include_router(search.router, prefix="/api")  # Add routes
-```
-
-### 2. **app/core/config.py** - Type-Safe Settings
-
-```python
-class Settings(BaseSettings):
-    SUPABASE_URL: str  # Must be string
-    OPENSEARCH_PORT: int  # Must be integer
-    CORS_ORIGINS: List[str]  # Must be list of strings
-```
-
-### 3. **app/services/supabase.py** - Database Operations
-
-```python
-def verify_token(self, token: str) -> Optional[Dict]:
-    # Verify JWT and return user info
-```
-
-### 4. **app/api/routes/search.py** - Search Endpoint
-
-```python
-@router.get("/search")
-async def search(query: str) -> SearchResponse:
-    # Returns 3 mock cases (will be real OpenSearch results)
-```
-
----
-
-## 📊 Logging
-
-Logs are automatically created in `logs/` directory:
-
-```
-logs/
-├── app.log           # All application events
-└── errors.log        # Errors and warnings
-```
-
-Log format includes: `timestamp | level | module | message`
-
----
-
-## 🎓 For Beginners
-
-### What is FastAPI?
-
-- Modern Python web framework for building APIs
-- Automatic documentation generation
-- Type safety with Pydantic
-- Very fast performance
-
-### What is Supabase?
-
-- Open-source Firebase alternative
-- Provides PostgreSQL database
-- Built-in authentication (Auth)
-- Real-time capabilities
-
-### What is OpenSearch?
-
-- Open-source search engine (based on Elasticsearch)
-- Full-text search capabilities
-- Boolean operators (AND, OR, NOT)
-- Fuzzy matching for typos
-
-### What is Type Safety?
-
-- Ensures variables have correct types
-- Catches errors before runtime
-- Makes code self-documenting
-- Better IDE support
-
----
-
-## 🚀 Next Steps
-
-1. **Get Supabase account** → Update `.env` credentials
-2. **Run setup** → `setup.bat`
-3. **Start services** → `docker-compose up`
-4. **Test API** → http://localhost:8000/docs
-5. **Replace mock data** → Integrate real OpenSearch
-6. **Add PDF upload** → Implement metadata extraction
-7. **Deploy** → Prepare for production
-
----
-
-## 📞 Support
-
-- **API Docs**: http://localhost:8000/docs
-- **Supabase Docs**: https://supabase.com/docs
-- **FastAPI Docs**: https://fastapi.tiangolo.com
-- **OpenSearch Docs**: https://opensearch.org/docs
-
-## 📝 License
-
-MIT - Feel free to use and modify
-
----
-
-**Created:** March 1, 2026  
-**Status:** 🟡 In Active Development  
-**Version:** 1.0.0 (Beta)
+`SEARCH_AND_FILTERS_BACKLOG.md` tracks open search/filter gaps.

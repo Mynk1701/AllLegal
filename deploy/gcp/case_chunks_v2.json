@@ -1,0 +1,51 @@
+{
+  "settings": {
+    "index": {
+      "knn": true,
+      "number_of_shards": 1,
+      "number_of_replicas": 0
+    }
+  },
+  "mappings": {
+    "_source": {
+      "excludes": ["chunk_embedding"]
+    },
+    "properties": {
+      "case_id":        { "type": "keyword" },
+      "chunk_id":       { "type": "keyword" },
+      "chunk_type":     { "type": "keyword" },
+      "citation":       { "type": "keyword" },
+      "court":          { "type": "keyword" },
+      "case_type":      { "type": "keyword" },
+      "verdict":        { "type": "keyword" },
+
+      "acts_cited":         { "type": "keyword" },
+      "acts_cited_raw":     { "type": "keyword" },
+      "sections_cited":     { "type": "keyword" },
+      "sections_cited_raw": { "type": "keyword" },
+      "cases_cited":        { "type": "keyword" },
+      "cases_cited_raw":    { "type": "keyword" },
+
+      "chunk_text":     { "type": "text", "analyzer": "english" },
+      "parties":        { "type": "text" },
+
+      "date_decided":   { "type": "date" },
+      "bench_strength": { "type": "integer" },
+      "chunk_sequence": { "type": "integer" },
+
+      "chunk_embedding": {
+        "type": "knn_vector",
+        "dimension": 1024,
+        "method": {
+          "name": "hnsw",
+          "space_type": "cosinesimil",
+          "engine": "lucene",
+          "parameters": {
+            "ef_construction": 256,
+            "m": 24
+          }
+        }
+      }
+    }
+  }
+}

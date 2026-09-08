@@ -16,6 +16,7 @@ import { clsx } from 'clsx';
 import { logout } from '@/app/auth/actions';
 import HistoryTree from './HistoryTree';
 import GroupsTree from './GroupsTree';
+import BillingBadge from './BillingBadge';
 
 const STORAGE_KEY = 'alllegal:nav-collapsed';
 type Section = 'history' | 'groups' | null;
@@ -56,11 +57,11 @@ export default function NavRail({ email }: { email?: string }) {
     >
       {/* Brand + collapse toggle */}
       <div className={clsx('flex items-center mb-6', collapsed ? 'justify-center' : 'justify-between px-1')}>
-        <Link href="/search" aria-label="AllLegal home" className="flex items-center gap-2.5 min-w-0">
+        <Link href="/search" aria-label="Nirnay Legal home" className="flex items-center gap-2.5 min-w-0">
           <span className="p-2 bg-blue-600 rounded-xl shadow-lg shadow-blue-500/20 shrink-0">
             <Scale className="w-5 h-5 text-white" />
           </span>
-          {!collapsed && <span className="font-extrabold text-lg tracking-tight truncate">AllLegal</span>}
+          {!collapsed && <span className="font-extrabold text-lg tracking-tight truncate">Nirnay Legal</span>}
         </Link>
         {!collapsed && (
           <button
@@ -144,6 +145,11 @@ export default function NavRail({ email }: { email?: string }) {
             </div>
           )}
         </nav>
+      </div>
+
+      {/* Plan + usage */}
+      <div className={clsx('mt-2', collapsed && 'flex justify-center')}>
+        <BillingBadge collapsed={collapsed} />
       </div>
 
       {/* User + logout */}

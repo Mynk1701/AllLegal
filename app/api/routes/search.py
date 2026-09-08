@@ -20,6 +20,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.security import get_current_user
+from app.core.quota import enforce_search_quota
 from app.schemas.schemas import (
     CaseResult,
     Facets,
@@ -226,7 +227,7 @@ def search(
     year_to: Optional[int] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(enforce_search_quota),
 ) -> SearchResponse:
     start = time.time()
     user_id = current_user.get("sub")

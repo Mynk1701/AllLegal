@@ -11,7 +11,8 @@ import { ROLE_COLORS, ROLE_DISPLAY_NAMES } from '@/lib/reader/roles';
 import GroupPicker from '@/components/groups/GroupPicker';
 import FilterBar from '@/components/search/FilterBar';
 import { parseSearchParams, filterSummary, type HistoryItem, type SearchFilters } from '@/lib/search';
-import { listSearchHistory, searchCases, getFacets } from '@/lib/api';
+import { listSearchHistory, searchCases, getFacets, QuotaError } from '@/lib/api';
+import { notifyBillingChanged } from '@/lib/billing/types';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -38,6 +39,7 @@ function SearchWorkspace() {
   const [selectedCase, setSelectedCase] = useState<CaseResult | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [quotaHit, setQuotaHit] = useState<QuotaError | null>(null);
   const [user, setUser] = useState<any>(null);
   const [searchHistory, setSearchHistory] = useState<HistoryItem[]>([]);
   // Filter option values (court/case_type/verdict/...) come from the backend's
@@ -124,6 +126,7 @@ function SearchWorkspace() {
   // identical, deterministic results — search is a pure function of {query, filters}.
   const runSearch = async (queryStr: string, filters: SearchFilters, pageNum = 1) => {
     setIsSearching(true);
+    setQuotaHit(null);
     try {
       const data = await searchCases(queryStr, filters, pageNum, PAGE_SIZE);
       setSearchResponse(data);
@@ -134,9 +137,14 @@ function SearchWorkspace() {
       setPage(pageNum);
       fetchHistory(); // Refresh history
     } catch (err) {
-      console.error('Search error:', err);
+      if (err instanceof QuotaError) {
+        setQuotaHit(err); // free-tier monthly limit → show upgrade prompt
+      } else {
+        console.error('Search error:', err);
+      }
     } finally {
       setIsSearching(false);
+      notifyBillingChanged(); // refresh the NavRail "N left" badge
     }
   };
 
@@ -219,6 +227,30 @@ function SearchWorkspace() {
 
   return (
     <div className="flex flex-1 min-w-0 overflow-hidden relative z-10">
+      {quotaHit && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 w-[min(92%,560px)]">
+          <div className="flex items-center gap-3 rounded-2xl border border-blue-200 bg-white px-4 py-3 shadow-xl shadow-blue-500/10">
+            <Sparkles className="w-5 h-5 text-blue-600 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-slate-900">You've used all {quotaHit.limit} free searches this month</p>
+              <p className="text-xs text-slate-500">Upgrade to Pro for unlimited searches.</p>
+            </div>
+            <button
+              onClick={() => router.push('/pricing')}
+              className="shrink-0 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all active:scale-95"
+            >
+              Upgrade
+            </button>
+            <button
+              onClick={() => setQuotaHit(null)}
+              aria-label="Dismiss"
+              className="shrink-0 p-1 rounded-lg text-slate-400 hover:text-slate-600 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
       {/* MIDDLE - SEARCH & RESULTS */}
       <main className="flex-1 flex flex-col min-w-0 relative z-10">
         <header className="px-8 pt-6 pb-4 bg-white/40 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-30">

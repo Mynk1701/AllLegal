@@ -31,7 +31,7 @@ export default function ForgotPasswordPage() {
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center items-center gap-2 mb-6">
           <Scale className="w-10 h-10 text-blue-600" />
-          <span className="text-3xl font-extrabold text-slate-900 tracking-tight">AllLegal</span>
+          <span className="text-3xl font-extrabold text-slate-900 tracking-tight">Nirnay Legal</span>
         </div>
         <h2 className="text-center text-2xl font-bold text-slate-900">Reset your password</h2>
         <p className="mt-2 text-center text-sm text-slate-500">

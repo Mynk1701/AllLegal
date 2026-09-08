@@ -6,8 +6,9 @@ MUST match the index-time model: stage_04_embed.py embedded chunks with
 so queries use the counterpart input_type="query".
 
 A small in-process LRU caches query vectors by text, so filter-only edits of a
-saved search (same query string) reuse the vector with no Voyage call.
-(Production: swap for Redis — see REDIS_URL in config — to share across workers.)
+saved search (same query string) reuse the vector with no Voyage call. The cache
+is per-worker; a shared cache would need an external store, which the app does
+not currently run.
 """
 import logging
 from functools import lru_cache

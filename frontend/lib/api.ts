@@ -13,8 +13,24 @@ import type {
   GroupDetail,
   GroupItem,
 } from '@/lib/groups/types';
+import type { Billing, SubscribeResponse } from '@/lib/billing/types';
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+
+/** Thrown by searchCases when the backend returns 429 (free-tier monthly limit
+ *  reached). Carries the usage numbers so the UI can show an upgrade prompt. */
+export class QuotaError extends Error {
+  used: number;
+  limit: number;
+  tier: string;
+  constructor(detail: { used?: number; limit?: number; tier?: string } = {}) {
+    super('Search quota exceeded');
+    this.name = 'QuotaError';
+    this.used = detail.used ?? 0;
+    this.limit = detail.limit ?? 0;
+    this.tier = detail.tier ?? 'free';
+  }
+}
 
 /** fetch() against the backend with the current Supabase session as a Bearer
  *  token. The session cookie is present even in a freshly-opened tab, so the
@@ -59,8 +75,33 @@ export async function searchCases(
   params.set('page', String(page));
   params.set('limit', String(limit));
   const res = await authedFetch(`/api/search?${params.toString()}`);
+  if (res.status === 429) {
+    // FastAPI wraps HTTPException(detail=...) as { detail: {...} }.
+    const body = await res.json().catch(() => ({}));
+    throw new QuotaError(body?.detail ?? {});
+  }
   if (!res.ok) {
     throw new Error(`Search failed (${res.status})`);
+  }
+  return res.json();
+}
+
+// ==================== Billing / tiers ====================
+
+/** Current user's plan + this-month usage (backend GET /api/billing/me). */
+export async function getBilling(): Promise<Billing> {
+  const res = await authedFetch('/api/billing/me');
+  if (!res.ok) {
+    throw new Error(`Failed to load billing (${res.status})`);
+  }
+  return res.json();
+}
+
+/** Start a Pro subscription; returns the fields needed to open Razorpay checkout. */
+export async function subscribe(): Promise<SubscribeResponse> {
+  const res = await authedFetch('/api/billing/subscribe', { method: 'POST' });
+  if (!res.ok) {
+    throw new Error(`Failed to start subscription (${res.status})`);
   }
   return res.json();
 }

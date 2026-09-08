@@ -1,5 +1,5 @@
 """
-AllLegal - Legal Case Search API
+Nirnay Legal - Legal Case Search API
 FastAPI application with Supabase integration for auth and database
 """
 from fastapi import FastAPI, Request
@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 import time
-from app.api.routes import search, cases, groups
+from app.api.routes import search, cases, groups, billing
 from app.core.config import settings
 
 # 1. Setup Global Logging
@@ -26,13 +26,13 @@ for noisy_lib in ["httpx", "opensearch", "uvicorn", "supabase", "postgrest", "vo
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown"""
-    logger.info("🚀 AllLegal API starting up (Port 8000)...")
+    logger.info("🚀 Nirnay Legal API starting up (Port 8000)...")
     yield
-    logger.info("🛑 AllLegal API shutting down...")
+    logger.info("🛑 Nirnay Legal API shutting down...")
 
 # Create FastAPI app
 app = FastAPI(
-    title="AllLegal - Legal Case Search API",
+    title="Nirnay Legal - Legal Case Search API",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -60,11 +60,12 @@ app.add_middleware(
 app.include_router(search.router, prefix="/api", tags=["search"])
 app.include_router(cases.router, prefix="/api", tags=["cases"])
 app.include_router(groups.router, prefix="/api", tags=["groups"])
+app.include_router(billing.router, prefix="/api", tags=["billing"])
 
 # Root
 @app.get("/")
 async def root():
-    return {"status": "running", "service": "AllLegal API"}
+    return {"status": "running", "service": "Nirnay Legal API"}
 
 if __name__ == "__main__":
     import uvicorn

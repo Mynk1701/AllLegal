@@ -9,12 +9,10 @@ class Settings(BaseSettings):
     """
     
     # Application
-    APP_NAME: str = "AllLegal"
-    APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    
+
     # OpenSearch Configuration (chunk-level index `case_chunks`)
     OPENSEARCH_HOST: str = "localhost"
     OPENSEARCH_PORT: int = 9200
@@ -64,8 +62,16 @@ class Settings(BaseSettings):
     # latency (and give the VM more RAM for page cache first).
     KNN_K_CEILING: int = 1500
 
-    # Redis Configuration
-    REDIS_URL: str = "redis://localhost:6379/0"
+    # Billing / usage tiers
+    # Free tier = FREE_TIER_SEARCH_LIMIT searches per CALENDAR MONTH (resets on
+    # the 1st). Enforced in app/core/quota.py by counting search_logs rows since
+    # the month start. `internal` (comped testers) and active `pro` are unlimited.
+    FREE_TIER_SEARCH_LIMIT: int = 15
+    BILLING_PROVIDER: str = "razorpay"      # gateway behind app/services/billing (Stripe-ready)
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_WEBHOOK_SECRET: str = ""
+    RAZORPAY_PLAN_ID: str = ""              # monthly Pro plan created in the Razorpay dashboard
 
     # Supabase/Auth Configuration
     SUPABASE_URL: str = ""
@@ -73,10 +79,16 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str = ""
 
     # CORS
+    # Every browser origin that may call this API. A missing origin here surfaces
+    # as a CORS error in the browser console while curl/Postman still work — so
+    # add the new host BEFORE pointing DNS at it, not after.
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://localhost:8000",
         "http://127.0.0.1:3000",
+        "https://nirnaylegal.in",
+        "https://www.nirnaylegal.in",
+        # Vercel's generated URL — kept so preview/rollback deploys keep working.
         "https://frontend-seven-tau-89.vercel.app",
     ]
     

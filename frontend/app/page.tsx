@@ -26,7 +26,7 @@ export default function LandingPage() {
             <div className="p-2 bg-blue-600 rounded-lg shadow-lg shadow-blue-500/20">
               <Scale className="w-6 h-6 text-white" />
             </div>
-            <span className="text-xl font-bold tracking-tight">AllLegal</span>
+            <span className="text-xl font-bold tracking-tight">Nirnay Legal</span>
           </div>
           <nav className="flex items-center gap-3">
             <Link
@@ -94,7 +94,7 @@ export default function LandingPage() {
 
         {/* FOOTER */}
         <footer className="py-8 border-t border-white/10 text-sm text-slate-500">
-          © 2026 AllLegal Intelligence Systems Pvt Ltd.
+          © 2026 Nirnay Legal
         </footer>
       </div>
     </div>

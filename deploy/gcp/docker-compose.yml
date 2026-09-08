@@ -1,0 +1,85 @@
+# OpenSearch — self-hosted, single-node, Google Cloud GCE VM (production).
+#
+# Manage with:   docker compose up -d        (start / recreate)
+#                docker compose down          (stop + remove container — NOT the data)
+#                docker compose ps            (status)
+#
+# WHY THIS FILE EXISTS
+# -------------------
+# Successor to deploy/oracle/docker-compose.yml. Oracle cut the Always Free
+# Ampere A1 allowance from 4 OCPU/24 GB to 2 OCPU/12 GB on 2026-06-15 and began
+# terminating over-limit instances from 2026-08-18, which capped that host at
+# 12 GB RAM for an 11.6 GB index — the RAM-bound state behind the /api/search
+# 502s (commit 5a5cce1). This runs the SAME image, version, topology and mapping
+# on a 16 GB box, so the move is a host change and nothing else.
+#
+# CRITICAL: `opensearch-data` is declared `external` at the bottom. That forces
+# Compose to REUSE the already-populated host volume instead of creating its own
+# project-prefixed empty one. `docker compose down`/`up` therefore never touches
+# the data. Never remove `external: true` unless you intend a blank cluster.
+# (On Oracle, a manual rebuild against a fresh empty volume served 0 documents
+# for ~20h before anyone noticed — see deploy/oracle/README.md.)
+#
+# Create the volume and the snapshot dir once, before the first `up`:
+#     docker volume create opensearch-data
+#     sudo mkdir -p /mnt/snapshots && sudo chown 1000:1000 /mnt/snapshots
+
+services:
+  opensearch:
+    image: opensearchproject/opensearch:2.19.5
+    container_name: law-opensearch
+    restart: unless-stopped
+    environment:
+      - cluster.name=law-helper-gcp
+      - node.name=opensearch-node1
+      - discovery.type=single-node          # single-node also skips bootstrap checks
+      # SECURITY PLUGIN ENABLED (incident 2026-06-26: an open, no-auth cluster was
+      # wiped twice by ransomware bots). The plugin requires auth on every request
+      # and serves the HTTP layer over TLS (demo self-signed certs). Mass-scan bots
+      # target open clusters and skip anything returning 401, so this stops them.
+      # The admin password comes from a VM-local .env (NOT committed) so the secret
+      # never lands in git. App connects with OPENSEARCH_USER=admin + this password.
+      # Defence in depth on GCP: the VPC firewall default-denies ingress, and
+      # tcp:9200 is opened only to Render's outbound CIDRs + the admin IP. Render's
+      # egress IPs are SHARED across tenants, so auth stays the real boundary.
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD:?set OPENSEARCH_INITIAL_ADMIN_PASSWORD in deploy/gcp/.env}
+      # Heap 4g of the box's 16g. The other ~12g is left to the OS page cache,
+      # which is what actually holds the index: the Lucene k-NN engine keeps
+      # vectors off-heap in mmap'd segments (verified — _plugins/_knn/stats
+      # reports graph_memory_usage: 0, i.e. the native KNN cache is unused). A
+      # ~5 GB index therefore sits entirely in page cache with room to roughly
+      # double. Do not raise this past 8g: it steals from the cache that matters.
+      - "OPENSEARCH_JAVA_OPTS=-Xms4g -Xmx4g"
+      - knn.memory.circuit_breaker.enabled=true
+      - knn.memory.circuit_breaker.limit=60%
+      # Filesystem snapshot repository (see backup-snapshot.sh). This was listed
+      # as a known follow-up on Oracle but was impossible there — that box had
+      # 3.8 GB of free disk. GCP holds the ONLY live copy of the corpus after
+      # decommissioning, so backups are mandatory here, not optional.
+      - path.repo=/mnt/snapshots
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9200:9200"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+      - /mnt/snapshots:/mnt/snapshots
+    healthcheck:
+      # Liveness only (cluster responds). This does NOT assert the cluster holds
+      # data — that's smoke-check.sh's job, run after every (re)start.
+      # -k: demo TLS is self-signed.  $$VAR escapes Compose interpolation so the
+      # container shell reads its own env at runtime (password stays out of logs).
+      test: ["CMD-SHELL", "curl -skf -u admin:$$OPENSEARCH_INITIAL_ADMIN_PASSWORD https://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+volumes:
+  opensearch-data:
+    external: true        # reuse the existing populated host volume — do not let Compose create one

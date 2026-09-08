@@ -1,0 +1,39 @@
+# Runs migrate_index.py as a service — NOT in tmux.
+#
+# WHY NOT tmux: a tmux session started over a non-interactive SSH connection is
+# killed when that connection closes (systemd tears down the user session), so
+# the copy died silently twice before this unit existed. `loginctl enable-linger
+# sarit` fixes tmux specifically, but a unit is better here: it restarts on
+# failure, and migrate_index.py is checkpointed and _id-keyed, so a restart
+# RESUMES rather than redoing work (verified live — it resumed at 5,500 docs).
+#
+# Install (after run-migrate.sh exists and the tunnel is up):
+#   sudo cp opensearch-migrate.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl start opensearch-migrate
+# Watch:
+#   tail -f ~/law-opensearch/migrate.log
+#   systemctl status opensearch-migrate
+#
+# Deliberately NOT enabled at boot: this is a one-shot migration, not a
+# long-running service. It must not restart itself after a reboot post-cutover.
+
+[Unit]
+Description=Copy case_chunks_v1 (Oracle, via tunnel) -> case_chunks_v2 (GCP)
+After=network-online.target oracle-tunnel.service
+Requires=oracle-tunnel.service
+
+[Service]
+Type=simple
+User=sarit
+WorkingDirectory=/home/sarit/law-opensearch
+ExecStart=/home/sarit/law-opensearch/run-migrate.sh
+# on-failure ONLY: a clean exit 0 means the copy finished and counts matched,
+# and must not be restarted. A non-zero exit (dropped tunnel, count mismatch)
+# resumes from the checkpoint.
+Restart=on-failure
+RestartSec=20
+StandardOutput=append:/home/sarit/law-opensearch/migrate.log
+StandardError=append:/home/sarit/law-opensearch/migrate.log
+
+[Install]
+WantedBy=multi-user.target
