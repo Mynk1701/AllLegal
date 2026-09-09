@@ -93,17 +93,8 @@ class SupabaseService:
             logger.error(f"❌ get_citations failed: {str(e)}")
             return []
 
-    def get_pdf_signed_url(self, case_id: str, expiry: Optional[int] = None) -> Optional[str]:
-        """Signed URL for case_pdfs/<case_id>.pdf (Option 1 — name-by-case_id)."""
-        path = settings.PDF_PATH_TEMPLATE.format(case_id=case_id)
-        try:
-            resp = self.admin.storage.from_(settings.PDF_BUCKET).create_signed_url(
-                path, expiry or settings.PDF_SIGNED_URL_EXPIRY
-            )
-            return resp.get("signedURL") or resp.get("signedUrl")
-        except Exception as e:
-            logger.warning(f"⚠️ signed URL failed for {case_id}: {str(e)}")
-            return None
+    # PDF signed URLs moved to app/services/gcs_service.py — Supabase Storage's
+    # tier is smaller than the PDF corpus. See HANDOVER.md.
 
     def get_pdf_signed_urls(
         self, case_ids: List[str], expiry: Optional[int] = None

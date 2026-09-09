@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.core.security import get_current_user
 from app.schemas.schemas import CaseCitation, CaseDetail, MatchedChunk
 from app.services import case_index
+from app.services.gcs_service import gcs_service
 from app.services.opensearch_service import opensearch_service
 from app.services.supabase import supabase_service
 
@@ -100,7 +101,7 @@ def get_case(case_id: str, current_user: dict = Depends(get_current_user)) -> Ca
         bench_strength=pick("bench_strength"),
         acts_cited=pick("acts_cited", []) or [],
         sections_cited=pick("sections_cited", []) or [],
-        pdf_url=supabase_service.get_pdf_signed_url(case_id),
+        pdf_url=gcs_service.get_pdf_signed_url(case_id),
         chunks=chunks,
         cites=cites,
     )

@@ -35,9 +35,15 @@ class Settings(BaseSettings):
     FACET_POOL_K: int = 500     # candidate pool size that query-aware facets aggregate over
     FACET_TERMS_SIZE: int = 50  # max distinct values returned per facet
 
-    # PDF storage (Supabase Storage). No pdf column on `cases`; resolve by
-    # convention: <PDF_BUCKET>/<case_id>.pdf -> signed URL (Option 1).
-    PDF_BUCKET: str = "case_pdfs"
+    # PDF storage (Google Cloud Storage — moved off Supabase, whose storage
+    # tier is smaller than the PDF corpus; see HANDOVER.md). No pdf column on
+    # `cases`; resolve by convention: <GCS_BUCKET>/<case_id>.pdf -> signed URL
+    # (Option 1). Signed via HMAC interoperability creds (a user-account HMAC
+    # key, not a service-account key — an org policy on the GCP project blocks
+    # service-account keys, including HMAC ones, for this project).
+    GCS_BUCKET: str = "law-helper-case-pdfs"
+    GCS_HMAC_ACCESS_KEY: str = ""
+    GCS_HMAC_SECRET_KEY: str = ""
     PDF_PATH_TEMPLATE: str = "{case_id}.pdf"
     PDF_SIGNED_URL_EXPIRY: int = 3600       # seconds
 
