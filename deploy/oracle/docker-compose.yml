@@ -1,0 +1,63 @@
+# OpenSearch — self-hosted, single-node, Oracle Cloud VM (production).
+#
+# Manage with:   docker compose up -d        (start / recreate)
+#                docker compose down          (stop + remove container — NOT the data)
+#                docker compose ps            (status)
+#
+# WHY THIS FILE EXISTS
+# -------------------
+# This replaces hand-typed `docker run ...` commands. On 2026-06-24 a manual
+# rebuild created a *fresh empty volume* and started the container against it
+# without re-loading the data, so the cluster served 0 documents for ~20h until
+# /api/facets started 500ing. Compose makes the volume, mounts, heap and restart
+# policy declarative, so a rebuild can't silently orphan the data volume.
+#
+# CRITICAL: `opensearch-data` is declared `external` at the bottom. That forces
+# Compose to REUSE the already-populated host volume instead of creating its own
+# project-prefixed empty one. `docker compose down`/`up` therefore never touches
+# the data. Never remove `external: true` unless you intend a blank cluster.
+
+services:
+  opensearch:
+    image: opensearchproject/opensearch:2.19.5
+    container_name: law-opensearch
+    restart: unless-stopped
+    environment:
+      - cluster.name=law-helper-prod
+      - node.name=opensearch-node1
+      - discovery.type=single-node          # single-node also skips bootstrap checks
+      # SECURITY PLUGIN ENABLED (incident 2026-06-26: an open, no-auth cluster was
+      # wiped twice by ransomware bots). The plugin requires auth on every request
+      # and serves the HTTP layer over TLS (demo self-signed certs). Mass-scan bots
+      # target open clusters and skip anything returning 401, so this stops them.
+      # The admin password comes from a VM-local .env (NOT committed) so the secret
+      # never lands in git. App connects with OPENSEARCH_USER=admin + this password.
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD:?set OPENSEARCH_INITIAL_ADMIN_PASSWORD in deploy/oracle/.env}
+      - "OPENSEARCH_JAVA_OPTS=-Xms4g -Xmx4g"
+      - knn.memory.circuit_breaker.enabled=true
+      - knn.memory.circuit_breaker.limit=60%
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9200:9200"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      # Liveness only (cluster responds). This does NOT assert the cluster holds
+      # data — that's smoke-check.sh's job, run after every (re)start.
+      # -k: demo TLS is self-signed.  $$VAR escapes Compose interpolation so the
+      # container shell reads its own env at runtime (password stays out of logs).
+      test: ["CMD-SHELL", "curl -skf -u admin:$$OPENSEARCH_INITIAL_ADMIN_PASSWORD https://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+volumes:
+  opensearch-data:
+    external: true        # reuse the existing populated host volume — do not let Compose create one

@@ -41,6 +41,20 @@ class OpenSearchService:
             use_ssl=settings.OPENSEARCH_USE_SSL,
             verify_certs=settings.OPENSEARCH_VERIFY_CERTS,
             ssl_show_warn=False,
+            # search() + facets() + suppressed_matches() now issue concurrent
+            # requests (see search.py thread pools); size the connection pool to
+            # match so they reuse sockets instead of opening throwaway ones
+            # ("Connection pool is full, discarding connection" with the default 1).
+            # NB: opensearch-py's kwarg is `pool_maxsize`, not urllib3's `maxsize`.
+            pool_maxsize=8,
+            # opensearch-py defaults to a 10s read timeout. On the 465k-chunk
+            # corpus a k-capped /search is ~1.7s warm but can spike past 10s when
+            # the OS page cache is cold (VM is RAM-bound), which surfaced as
+            # ReadTimeout -> 502. 30s absorbs the cold-cache tail; one retry on
+            # timeout covers a transient spike without hanging the request.
+            timeout=30,
+            max_retries=1,
+            retry_on_timeout=True,
         )
         self.index = settings.OPENSEARCH_INDEX
 

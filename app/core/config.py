@@ -9,12 +9,10 @@ class Settings(BaseSettings):
     """
     
     # Application
-    APP_NAME: str = "AllLegal"
-    APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    
+
     # OpenSearch Configuration (chunk-level index `case_chunks`)
     OPENSEARCH_HOST: str = "localhost"
     OPENSEARCH_PORT: int = 9200
@@ -59,21 +57,34 @@ class Settings(BaseSettings):
     # through page 5 of a 50-case corpus). Only falls back to an approximate
     # top-k once the matching set exceeds the ceiling — a deliberately huge,
     # unfiltered, full-corpus query. See opensearch_service.search().
-    KNN_K_CEILING: int = 5000
+    #
+    # Sized against Lucene-HNSW latency on the 465k-chunk corpus: k scales the
+    # candidate pool an unfiltered query walks, so warm /search latency is ~linear
+    # in this ceiling (k=5000 ~3.3s, k=1500 ~1.7s, k=500 ~0.8s, measured). 1500
+    # covers ~500 distinct cases at 3 chunks/case — far deeper than real
+    # pagination — while keeping every unfiltered query comfortably under the
+    # client read timeout even when the OS page cache is cold. Raise only if
+    # deep-pagination recall on huge unfiltered result sets matters more than tail
+    # latency (and give the VM more RAM for page cache first).
+    KNN_K_CEILING: int = 1500
 
-    # Redis Configuration
-    REDIS_URL: str = "redis://localhost:6379/0"
-    
     # Supabase/Auth Configuration
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
 
     # CORS
+    # Every browser origin that may call this API. A missing origin here surfaces
+    # as a CORS error in the browser console while curl/Postman still work — so
+    # add the new host BEFORE pointing DNS at it, not after.
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://localhost:8000",
         "http://127.0.0.1:3000",
+        "https://nirnaylegal.in",
+        "https://www.nirnaylegal.in",
+        # Vercel's generated URL — kept so preview/rollback deploys keep working.
+        "https://frontend-seven-tau-89.vercel.app",
     ]
     
     class Config:

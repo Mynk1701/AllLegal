@@ -18,7 +18,7 @@ export default async function ConfirmPage({
     <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center px-4">
       <div className="flex justify-center items-center gap-2 mb-6">
         <Scale className="w-10 h-10 text-blue-600" />
-        <span className="text-3xl font-extrabold text-slate-900 tracking-tight">AllLegal</span>
+        <span className="text-3xl font-extrabold text-slate-900 tracking-tight">Nirnay Legal</span>
       </div>
 
       <div className="bg-white py-8 px-6 shadow-xl shadow-slate-200/50 rounded-xl border border-slate-100 max-w-sm w-full text-center space-y-5">
