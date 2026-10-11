@@ -114,10 +114,25 @@ export const TOUR_STEPS: TourStep[] = [
 ];
 
 /**
- * localStorage key recording that this browser has seen the tour.
+ * Key inside Supabase `auth.users.user_metadata` recording that this USER has
+ * seen the tour.
  *
- * Deliberately per-browser, not per-account: it is a UI preference, not user
- * data, and storing it server-side would mean a profiles-table write on every
- * first load. Bump the suffix to re-show the tour to everyone after a redesign.
+ * Per-user, not per-browser: someone sharing a laptop, clearing their cache, or
+ * switching to their phone should not be re-onboarded, and two people on one
+ * machine should each get it once.
+ *
+ * user_metadata specifically — not a `profiles` row — because it already rides
+ * in the JWT the client holds, so reading it costs NO extra request. A table
+ * would add a blocking round trip to Supabase (in Seoul, while the backend is
+ * in Oregon — measured ~700ms) before we could decide whether to show a tour,
+ * and `profiles` does not even exist yet (it is the blocker keeping billing on
+ * its own branch).
+ *
+ * Caveat: user_metadata is user-writable, so a determined user could flip their
+ * own flag. Harmless for a tour preference — arguably correct, since it is
+ * their preference. Anything that must be tamper-proof needs app_metadata.
+ *
+ * Versioned: bump to `tour_seen_v2` to re-show the tour to everyone after a
+ * redesign, without touching anyone's stored metadata.
  */
-export const TOUR_SEEN_KEY = 'nirnay.tour.seen.v1';
+export const TOUR_SEEN_META_KEY = 'tour_seen_v1';

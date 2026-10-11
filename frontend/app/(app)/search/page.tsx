@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Search, BookOpen, Scale, Clock, ChevronRight, FileText, Info, Sparkles, Gavel, FolderPlus, X } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
@@ -13,7 +13,7 @@ import FilterBar from '@/components/search/FilterBar';
 import { parseSearchParams, filterSummary, type HistoryItem, type SearchFilters } from '@/lib/search';
 import { listSearchHistory, searchCases, getFacets } from '@/lib/api';
 import ProductTour from '@/components/onboarding/ProductTour';
-import { EXAMPLE_QUERIES } from '@/lib/onboarding/config';
+import { EXAMPLE_QUERIES, TOUR_SEEN_META_KEY } from '@/lib/onboarding/config';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -148,6 +148,21 @@ function SearchWorkspace() {
     runSearch(activeQuery, activeFilters, p);
   };
 
+  // Record that this USER has seen the tour, in Supabase user_metadata.
+  //
+  // Fire-and-forget on purpose: the tour must open instantly, and failing to
+  // persist the flag is far less bad than blocking onboarding on a network
+  // call. Worst case it is offered again next session. We also update local
+  // state so `seen` flips immediately, without waiting for the round trip.
+  const markTourSeen = useCallback(() => {
+    setUser((prev: any) =>
+      prev ? { ...prev, user_metadata: { ...prev.user_metadata, [TOUR_SEEN_META_KEY]: true } } : prev,
+    );
+    supabase.auth
+      .updateUser({ data: { [TOUR_SEEN_META_KEY]: true } })
+      .catch((e) => console.warn('Could not persist tour-seen flag:', e));
+  }, [supabase.auth]);
+
   // Form submit → search the current query + active filters. No-op when there's
   // nothing to search (empty query AND no active filters).
   const handleSearch = (e: React.FormEvent) => {
@@ -264,6 +279,8 @@ function SearchWorkspace() {
               <ProductTour
                 onSeed={(q) => { setQuery(q); runSearch(q, {}); }}
                 ready={!isSearching && !!user}
+                seen={!!user?.user_metadata?.[TOUR_SEEN_META_KEY]}
+                onMarkSeen={markTourSeen}
               />
             </div>
           </div>
