@@ -9,7 +9,7 @@ project (iam.disableServiceAccountKeyCreation) blocks service-account
 keys, including HMAC ones, for this project. See HANDOVER.md.
 """
 import logging
-from typing import Optional
+from typing import Dict, List, Optional
 
 import boto3
 from botocore.config import Config
@@ -53,6 +53,27 @@ class GCSService:
         except Exception as e:
             logger.warning(f"⚠️ GCS signed URL failed for {case_id}: {str(e)}")
             return None
+
+    def get_pdf_signed_urls(
+        self, case_ids: List[str], expiry: Optional[int] = None
+    ) -> Dict[str, Optional[str]]:
+        """{case_id: signed url | None} for many cases — what /search needs.
+
+        A plain loop, deliberately: SigV4 presigning is pure local HMAC over the
+        request string, with NO network call and no existence check. So N URLs
+        cost N cheap hashes (microseconds), and there is nothing to batch.
+
+        This replaced Supabase Storage's `create_signed_urls`, which DID need a
+        round trip — and a trans-Pacific one, since that project is in Seoul
+        while this backend runs in Oregon. Dropping it takes a network hop off
+        the /search hot path entirely.
+
+        Because presigning never checks existence, a URL is returned even for a
+        case whose PDF is absent from the bucket; that fetch then 404s at GCS.
+        That matches the previous behaviour closely enough (Storage degraded such
+        a case to None) and keeps one bad object from failing the whole page.
+        """
+        return {cid: self.get_pdf_signed_url(cid, expiry) for cid in case_ids}
 
 
 gcs_service = GCSService()

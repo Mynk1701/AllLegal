@@ -29,6 +29,7 @@ from app.schemas.schemas import (
     SuppressedCase,
 )
 from app.services.embeddings import embedding_service
+from app.services.gcs_service import gcs_service
 from app.services.opensearch_service import opensearch_service
 from app.services.supabase import supabase_service
 
@@ -281,15 +282,16 @@ def search(
 
     # suppressed_matches() needs case_ids (search's output) to know which
     # strong matches are already shown vs. hidden, so it can't start until
-    # search() resolves — but it doesn't depend on the Supabase lookups or
-    # on each other, so these four run concurrently here instead. The signed-URL
-    # batch in particular replaces a per-result loop of ~10 serial Storage round
-    # trips (~3s) with a single batched call (~0.17s) — the dominant warm-latency
-    # cost before this change.
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    # search() resolves — but it doesn't depend on the Supabase lookups or on
+    # each other, so these three run concurrently here instead.
+    #
+    # PDF URLs are NOT in the pool: GCS signing is local HMAC with no network
+    # call (see gcs_service.get_pdf_signed_urls), so a thread would cost more
+    # than it saves. It used to be here because Supabase Storage needed a
+    # round trip — to Seoul, while this backend runs in Oregon.
+    with ThreadPoolExecutor(max_workers=3) as pool:
         cases_future = pool.submit(supabase_service.get_cases_by_ids, case_ids)
         bboxes_future = pool.submit(supabase_service.get_chunk_bboxes_by_ids, chunk_ids)
-        pdf_urls_future = pool.submit(supabase_service.get_pdf_signed_urls, case_ids)
         suppressed_future = pool.submit(
             opensearch_service.suppressed_matches,
             query_vector=query_vector, filters=filters, result_case_ids=set(case_ids),
@@ -297,8 +299,9 @@ def search(
 
         cases = cases_future.result()
         bboxes = bboxes_future.result()
-        pdf_urls = pdf_urls_future.result()
         suppressed_raw = suppressed_future.result()
+
+    pdf_urls = gcs_service.get_pdf_signed_urls(case_ids)
 
     results = [_build_case_result(g, cases.get(g["case_id"]), bboxes, pdf_urls) for g in case_groups]
     suppressed = [SuppressedCase(**s) for s in suppressed_raw]
