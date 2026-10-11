@@ -90,16 +90,25 @@ export default function ProductTour({ onSeed, ready, seen, onMarkSeen }: Props) 
   const startRef = useRef(start);
   startRef.current = start;
 
-  // Auto-start once per mount for a user who has not seen it, after the page is
-  // interactive. Guarded by a ref, not state: setting state here would change a
-  // dependency, and React would run this effect's cleanup — cancelling the very
-  // timer it just scheduled.
+  // Auto-start once for a user who has not seen it, after the page is interactive.
+  //
+  // The guard is set INSIDE the timer, not before it. Next.js enables React
+  // Strict Mode by default on the App Router, which deliberately double-invokes
+  // effects (mount -> cleanup -> mount). Claiming the guard up front meant the
+  // cleanup cancelled the pending timer and the re-run then bailed on the
+  // already-claimed guard, so the tour never fired in dev. Claiming it inside
+  // lets the re-run reschedule, while still preventing a double start.
+  //
+  // Same reason the guard is a ref and not state: setting state here would
+  // change a dependency and trigger the very cleanup that cancels the timer.
   const autoStartedRef = useRef(false);
   useEffect(() => {
-    if (autoStartedRef.current || !ready) return;
-    autoStartedRef.current = true;
-    if (seen) return;
-    const t = window.setTimeout(() => startRef.current(), 600); // let first paint settle
+    if (autoStartedRef.current || !ready || seen) return;
+    const t = window.setTimeout(() => {
+      if (autoStartedRef.current) return;
+      autoStartedRef.current = true;
+      startRef.current();
+    }, 600); // let the first paint settle
     return () => window.clearTimeout(t);
   }, [ready, seen]);
 
