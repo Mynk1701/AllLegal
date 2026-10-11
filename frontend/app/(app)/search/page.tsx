@@ -12,6 +12,8 @@ import GroupPicker from '@/components/groups/GroupPicker';
 import FilterBar from '@/components/search/FilterBar';
 import { parseSearchParams, filterSummary, type HistoryItem, type SearchFilters } from '@/lib/search';
 import { listSearchHistory, searchCases, getFacets } from '@/lib/api';
+import ProductTour from '@/components/onboarding/ProductTour';
+import { EXAMPLE_QUERIES } from '@/lib/onboarding/config';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -231,6 +233,7 @@ function SearchWorkspace() {
                   type="text"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
+                  data-tour="search-input"
                   placeholder="Ask a legal question or cite a statute..."
                   className="w-full pl-14 pr-32 py-4 bg-white border border-slate-200 rounded-2xl text-[15px] font-medium shadow-xl shadow-slate-200/30 focus:outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500 transition-all placeholder-slate-400"
                 />
@@ -247,12 +250,22 @@ function SearchWorkspace() {
               </div>
             </form>
 
-            <FilterBar
-              facets={facets}
-              filters={collectFilters()}
-              onChange={stageFilters}
-              onClearAll={() => stageFilters({})}
-            />
+            <div className="flex items-center gap-2">
+              <div data-tour="filters" className="min-w-0 flex-1">
+                <FilterBar
+                  facets={facets}
+                  filters={collectFilters()}
+                  onChange={stageFilters}
+                  onClearAll={() => stageFilters({})}
+                />
+              </div>
+              {/* Re-runnable any time, not just on first visit. `ready` gates the
+                  auto-start so the tour never opens over a blank page. */}
+              <ProductTour
+                onSeed={(q) => { setQuery(q); runSearch(q, {}); }}
+                ready={!isSearching && !!user}
+              />
+            </div>
           </div>
         </header>
 
@@ -294,10 +307,33 @@ function SearchWorkspace() {
                     </div>
                   </>
                 ) : (
-                  <div className="rounded-3xl border border-dashed border-slate-200 bg-white/40 px-8 py-16 text-center">
-                    <Search className="w-10 h-10 text-slate-200 mx-auto mb-3" />
-                    <p className="text-slate-500 font-semibold">Your searches will show up here.</p>
-                    <p className="text-sm text-slate-400 mt-1">Start by typing a question above.</p>
+                  /* FIRST-RUN STATE. This replaced a dashed "your searches
+                     will show up here" box — a dead end for exactly the people
+                     who need the most help. The examples ARE the onboarding:
+                     users coming from boolean engines type `438 CrPC`, so a chip
+                     phrased as a real question teaches the product by being
+                     clicked. Edit them in lib/onboarding/config.ts. */
+                  <div>
+                    <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-3 flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5" /> Try one of these
+                    </h3>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      {EXAMPLE_QUERIES.map((ex) => (
+                        <button
+                          key={ex.query}
+                          onClick={() => { setQuery(ex.query); runSearch(ex.query, {}); }}
+                          className="group flex items-start gap-3 px-4 py-4 rounded-2xl bg-white/70 border border-slate-200/80 hover:bg-white hover:border-blue-300 hover:shadow-lg hover:shadow-blue-500/5 transition-all text-left"
+                        >
+                          <span className="w-9 h-9 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center shrink-0 group-hover:bg-blue-50 group-hover:border-blue-100 transition-colors">
+                            <Search className="w-4 h-4 text-slate-400 group-hover:text-blue-500" />
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block text-sm font-bold text-slate-700 leading-snug">{ex.query}</span>
+                            <span className="block text-[11px] font-semibold text-slate-400 mt-0.5">{ex.topic}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -377,7 +413,10 @@ function SearchWorkspace() {
                           </div>
                         </div>
 
-                        <p className="text-sm text-slate-600 font-medium leading-[1.7] mb-6 line-clamp-3">
+                        <p
+                          data-tour={searchResponse?.results[0]?.case_id === result.case_id ? 'result-passage' : undefined}
+                          className="text-sm text-slate-600 font-medium leading-[1.7] mb-6 line-clamp-3"
+                        >
                           {result.matched_chunks[0]?.chunk_text || 'No preview available.'}
                         </p>
 
@@ -454,6 +493,7 @@ function SearchWorkspace() {
 
             <div className="flex gap-2 px-8 pt-5">
               <a
+                data-tour="open-reader"
                 href={readerHref(selectedCase)}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -463,6 +503,7 @@ function SearchWorkspace() {
                 Open in Reader
               </a>
               <button
+                data-tour="save-group"
                 onClick={() => setPickerOpen(true)}
                 className="flex-1 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-xl font-bold text-xs hover:bg-slate-50 transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
               >
