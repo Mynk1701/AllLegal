@@ -15,7 +15,7 @@
 // actually missing, which is exactly right here — the seed search round-trips to
 // Render + OpenSearch (~1-3s warm, much slower on a Render cold start).
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { HelpCircle } from 'lucide-react';
 import { driver, type Driver } from 'driver.js';
 import 'driver.js/dist/driver.css';
@@ -23,19 +23,29 @@ import { TOUR_SEEN_KEY, TOUR_SEED_QUERY, TOUR_STEPS } from '@/lib/onboarding/con
 
 // Private windows and "block site data" make localStorage throw on ACCESS, not
 // just return null — so both of these need try/catch, not a null check.
+//
+// Survives a blocked store in memory instead. Returning `true` on throw (the
+// obvious "don't nag them" reflex) is wrong: a private window is a genuine
+// first visit and the single most likely place someone evaluates the product,
+// so it must still get the tour. The module-level flag stops it re-showing on
+// client-side navigation within the same session.
+let seenThisSession = false;
+
 function readSeen(): boolean {
+  if (seenThisSession) return true;
   try {
     return window.localStorage.getItem(TOUR_SEEN_KEY) === '1';
   } catch {
-    return true; // can't persist "seen" -> don't nag on every single load
+    return false; // storage blocked -> treat as unseen, guard in memory
   }
 }
 
 function markSeen() {
+  seenThisSession = true;
   try {
     window.localStorage.setItem(TOUR_SEEN_KEY, '1');
   } catch {
-    /* non-fatal: tour may reappear next visit */
+    /* storage blocked: the in-memory flag covers this session */
   }
 }
 
@@ -48,13 +58,6 @@ type Props = {
 
 export default function ProductTour({ onSeed, ready }: Props) {
   const driverRef = useRef<Driver | null>(null);
-  const [shouldAutoStart, setShouldAutoStart] = useState(false);
-
-  // Read in an effect, never during render: there is no localStorage during
-  // SSR/prerender, and reading it in render would also desync hydration.
-  useEffect(() => {
-    if (!readSeen()) setShouldAutoStart(true);
-  }, []);
 
   const start = useCallback(() => {
     driverRef.current?.destroy();
@@ -92,13 +95,28 @@ export default function ProductTour({ onSeed, ready }: Props) {
     onSeed(TOUR_SEED_QUERY);
   }, [onSeed]);
 
-  // Auto-start once, for a first-time visitor, after the page is interactive.
+  // Keep the latest `start` reachable WITHOUT making it an effect dependency.
+  // The parent passes `onSeed` as an inline arrow, so it — and therefore
+  // `start` — has a new identity on every render. As a dependency it would
+  // re-run the effect below every render, and each re-run's cleanup would clear
+  // the pending timer, so the tour could never actually fire.
+  const startRef = useRef(start);
+  startRef.current = start;
+
+  // Auto-start once per session for a first-time visitor, after the page is
+  // interactive. Guarded by a ref, not state: setting state here would change a
+  // dependency, and React would run this effect's cleanup — cancelling the very
+  // timer it just scheduled. (That is exactly the bug this replaces.)
+  const autoStartedRef = useRef(false);
   useEffect(() => {
-    if (!shouldAutoStart || !ready) return;
-    setShouldAutoStart(false);
-    const t = window.setTimeout(start, 600); // let the first paint settle
+    if (autoStartedRef.current || !ready) return;
+    autoStartedRef.current = true;
+    // Read storage here, not during render: localStorage does not exist during
+    // prerender, and reading it in render would desync hydration.
+    if (readSeen()) return;
+    const t = window.setTimeout(() => startRef.current(), 600); // let first paint settle
     return () => window.clearTimeout(t);
-  }, [shouldAutoStart, ready, start]);
+  }, [ready]);
 
   // Tear the overlay down on unmount, or it outlives a route change.
   useEffect(() => () => driverRef.current?.destroy(), []);
