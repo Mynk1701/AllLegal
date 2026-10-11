@@ -19,6 +19,8 @@ import { useCallback, useEffect, useRef } from 'react';
 import { HelpCircle } from 'lucide-react';
 import { driver, type Driver } from 'driver.js';
 import 'driver.js/dist/driver.css';
+// Our overrides — must come AFTER driver's own stylesheet so they win.
+import './tour.css';
 import { TOUR_SEEN_KEY, TOUR_SEED_QUERY, TOUR_STEPS } from '@/lib/onboarding/config';
 
 // Private windows and "block site data" make localStorage throw on ACCESS, not
@@ -69,6 +71,8 @@ export default function ProductTour({ onSeed, ready }: Props) {
       stagePadding: 6,
       stageRadius: 12,
       smoothScroll: true,
+      // Scopes components/onboarding/tour.css to this instance.
+      popoverClass: 'nirnay-tour',
       // Wait up to 20s for an anchor that isn't in the DOM yet (the seeded
       // search has to come back first). Costs nothing when the anchor is
       // already present — driver.js checks before it waits.

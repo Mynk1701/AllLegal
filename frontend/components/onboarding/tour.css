@@ -1,0 +1,152 @@
+/* Nirnay styling for the driver.js tour popover.
+ *
+ * driver.js ships a deliberately plain popover — 5px radius, 12px grey buttons,
+ * a hard `0 1px 10px #0006` shadow, Helvetica — which looks nothing like the
+ * app around it. Everything here is matched to the real design language in
+ * search/page.tsx: rounded-2xl, Inter, slate borders, blue-600 primary, and the
+ * soft blue-tinted shadows used on the result cards.
+ *
+ * Scoped to `.nirnay-tour` (set via driver's `popoverClass`) so we never style
+ * someone else's driver instance, and so each selector out-specifies the
+ * library's own `.driver-popover` rules without needing !important.
+ *
+ * NB: driver.js applies `all: unset` to .driver-popover, so nothing is
+ * inherited from body — font-family has to be restated here, not assumed.
+ */
+
+.driver-popover.nirnay-tour {
+  /* next/font applies Inter through a generated class on <body> (see
+     app/layout.tsx), NOT a CSS variable — so there is no --font-inter to read.
+     driver.js appends the popover to document.body, so `inherit` resolves to
+     Inter. This has to be restated because driver.css sets its own
+     font-family after `all: unset`, overriding what unset would have inherited. */
+  font-family: inherit;
+  max-width: 340px;
+  padding: 20px 22px;
+  border-radius: 20px;
+  border: 1px solid rgb(226 232 240);        /* slate-200 */
+  background-color: #fff;
+  /* Mirrors the result cards' `shadow-2xl shadow-blue-500/10` — a soft blue
+     cast rather than driver's hard black drop shadow. */
+  box-shadow:
+    0 20px 40px -12px rgb(59 130 246 / 0.18),
+    0 8px 16px -8px rgb(15 23 42 / 0.08);
+}
+
+.driver-popover.nirnay-tour .driver-popover-title {
+  font-size: 17px;
+  font-weight: 800;                           /* font-extrabold */
+  letter-spacing: -0.01em;                    /* tracking-tight */
+  line-height: 1.3;
+  color: rgb(15 23 42);                       /* slate-900 */
+  padding-right: 28px;                        /* clear the absolute close button */
+}
+
+.driver-popover.nirnay-tour .driver-popover-description {
+  margin-top: 8px;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.65;                          /* leading-relaxed */
+  color: rgb(100 116 139);                    /* slate-500 */
+}
+
+/* Inline emphasis used in the step copy (config.ts writes <em>/<code>/<strong>). */
+.driver-popover.nirnay-tour .driver-popover-description em {
+  font-style: normal;
+  font-weight: 700;
+  color: rgb(37 99 235);                      /* blue-600 — the "ask a question" example */
+}
+
+.driver-popover.nirnay-tour .driver-popover-description strong {
+  font-weight: 700;
+  color: rgb(51 65 85);                       /* slate-700 */
+}
+
+.driver-popover.nirnay-tour .driver-popover-description code {
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid rgb(241 245 249);         /* slate-100 */
+  background-color: rgb(248 250 252);         /* slate-50 */
+  font-size: 12px;
+  font-weight: 700;
+  color: rgb(100 116 139);
+  /* The keyword habit we're contrasting against — set apart, not highlighted. */
+}
+
+.driver-popover.nirnay-tour .driver-popover-footer {
+  margin-top: 18px;
+  gap: 12px;
+}
+
+/* Step counter, styled like the app's section labels
+   (text-[10px] uppercase tracking-[0.2em] text-slate-400). */
+.driver-popover.nirnay-tour .driver-popover-progress-text {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: rgb(148 163 184);                    /* slate-400 */
+}
+
+.driver-popover.nirnay-tour .driver-popover-footer-btn {
+  padding: 8px 14px;
+  border-radius: 12px;                        /* rounded-xl */
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  transition: background-color 0.15s, border-color 0.15s, transform 0.1s;
+}
+
+.driver-popover.nirnay-tour .driver-popover-footer-btn:active {
+  transform: scale(0.98);                     /* active:scale-[0.98] */
+}
+
+/* Secondary (Back) */
+.driver-popover.nirnay-tour .driver-popover-prev-btn {
+  border: 1px solid rgb(226 232 240);
+  background-color: #fff;
+  color: rgb(71 85 105);                      /* slate-600 */
+}
+
+.driver-popover.nirnay-tour .driver-popover-prev-btn:hover {
+  background-color: rgb(248 250 252);
+  border-color: rgb(203 213 225);
+}
+
+/* Primary (Next / Start searching) */
+.driver-popover.nirnay-tour .driver-popover-next-btn {
+  border: 1px solid transparent;
+  background-color: rgb(37 99 235);           /* blue-600 */
+  color: #fff;
+  box-shadow: 0 8px 16px -6px rgb(59 130 246 / 0.5);
+}
+
+.driver-popover.nirnay-tour .driver-popover-next-btn:hover {
+  background-color: rgb(29 78 216);           /* blue-700 */
+}
+
+.driver-popover.nirnay-tour .driver-popover-close-btn {
+  top: 10px;
+  right: 12px;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  font-size: 17px;
+  font-weight: 400;
+  color: rgb(203 213 225);                    /* slate-300 */
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.driver-popover.nirnay-tour .driver-popover-close-btn:hover,
+.driver-popover.nirnay-tour .driver-popover-close-btn:focus {
+  color: rgb(71 85 105);
+  background-color: rgb(248 250 252);
+}
+
+/* The arrow is drawn as a 5px CSS border triangle, with three sides made
+   transparent. It only ever needs to match the popover's background — larger
+   here to sit correctly against the roomier 20px radius. It carries no border
+   of its own, which is why the popover's own border is kept very light. */
+.driver-popover.nirnay-tour .driver-popover-arrow {
+  border-width: 7px;
+}
