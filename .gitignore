@@ -53,6 +53,10 @@ deploy/gcp/migrate_checkpoint.json
 deploy/gcp/migrate_failures.jsonl
 deploy/gcp/migrate.log
 
+# One-off script output (e.g. scripts/test_citation_relationship.py reports) —
+# generated per run, not source
+scripts/output/
+
 # OpenSearch data dumps — large binaries, archived to GCS instead (deploy/gcp/README.md)
 *.tar.gz
 
