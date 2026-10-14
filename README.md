@@ -155,3 +155,51 @@ security posture, backup/restore, and the rebuild path.
 ## Known issues
 
 `SEARCH_AND_FILTERS_BACKLOG.md` tracks open search/filter gaps.
+
+---
+
+## 🖊️ Drafting Module (Phase 1 — Cheque Bounce)
+
+`app/drafting/` generates the fixed-format filings for a litigation track —
+starting with cheque bounce (S.138 NI Act) — from facts the lawyer enters
+once. Full design: [`plans/read-alllegal-drafting-module-track-spec-keen-ladybug.md`](plans/read-alllegal-drafting-module-track-spec-keen-ladybug.md).
+
+**One-time setup**
+
+```bash
+pip install -r requirements.txt     # adds PyYAML, docxtpl, python-docx
+psql < supabase/migrations/0001_drafting.sql   # or run it via the Supabase SQL editor
+python3 scripts/build_drafting_templates.py    # generates app/drafting/tracks/cheque_bounce/templates/*.docx
+```
+
+Re-run `build_drafting_templates.py` only when a template's STRUCTURE
+changes (a new field, a new conditional block) — wording changes are made
+by opening the generated `.docx` directly in Word; the Jinja tags are plain
+text and safe to leave alone.
+
+**Run the unit tests** (deadline engine, formatters, calendar — pure
+Python, no DB/FastAPI needed):
+
+```bash
+pytest tests/drafting/
+```
+
+**API** (mounted under `/api`, same auth as `/api/groups`):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/drafting/tracks` | Enabled tracks |
+| `GET /api/drafting/tracks/{key}` | One track's stages/fields/documents |
+| `POST /api/drafting/matters` | Create a matter for a track |
+| `GET /api/drafting/matters` / `/{id}` | List / fetch a matter |
+| `PATCH /api/drafting/matters/{id}/facts` | Save one section of facts (autosave) |
+| `GET /api/drafting/matters/{id}/deadlines` | Computed S.138 deadlines |
+| `GET /api/drafting/matters/{id}/readiness` | Per-document readiness (missing facts / blocking issues) |
+| `POST /api/drafting/matters/{id}/documents/{template_key}` | Generate a `.docx` (e.g. `legal_notice`) |
+| `POST /api/drafting/matters/{id}/documents/{document_id}/finalise` | Record the lawyer's sign-off |
+
+Only `legal_notice` has a built template today (the Phase-1 vertical
+slice); the other five cheque-bounce documents are configured in
+`app/drafting/tracks/cheque_bounce/track.yaml` but still need their
+`.docx` templates built per the LLD's M4 step.
+

@@ -1,0 +1,92 @@
+# Track config — Cheque bounce (S.138 NI Act).
+# LLD: plans/read-alllegal-drafting-module-track-spec-keen-ladybug.md, S.4.
+# Source spec: allLegal_drafting_module_track_specs.docx, S.2.
+#
+# This file is the single source of truth for: what the wizard shows, what
+# each document needs before it can be generated, and which research slots
+# Phase 2 opens. Section keys under `stages[].sections` and `documents[].
+# requires` must match the top-level field names on
+# app.drafting.models.cheque_bounce.ChequeBounceFacts.
+
+key: cheque_bounce
+title: "Cheque bounce (S.138 Negotiable Instruments Act)"
+facts_model: app.drafting.models.cheque_bounce.ChequeBounceFacts
+
+stages:
+  - key: parties
+    label: "Parties"
+    sections: [complainant, accused, advocate]
+  - key: transaction
+    label: "Underlying transaction"
+    sections: [transaction]
+  - key: instrument
+    label: "Cheque & dishonour"
+    sections: [cheques, presentments, dishonours]
+  - key: notice
+    label: "Legal notice"
+    sections: [notice, reply]
+  - key: filing
+    label: "Court & filing"
+    sections: [forum, filing]
+
+# Keys the deadline engine computes (app.drafting.deadlines.engine.compute).
+deadlines: [cheque_validity, notice_deadline, payment_window, complaint_window]
+
+documents:
+  - key: legal_notice
+    template: legal_notice.docx
+    title: "Legal notice under S.138 proviso (b)"
+    requires: [complainant, accused, advocate, transaction, cheques, presentments, dishonours]
+
+  - key: complaint
+    template: complaint.docx
+    title: "Complaint under S.138 NI Act"
+    requires: [complainant, accused, advocate, transaction, cheques, presentments, dishonours, notice, forum]
+
+  - key: affidavit_s145
+    template: affidavit.docx
+    title: "Complainant's affidavit (evidence-in-lieu, S.145 NI Act)"
+    requires: [complainant, accused, advocate, transaction, cheques, presentments, dishonours, notice]
+
+  - key: synopsis
+    template: synopsis.docx
+    title: "Mandatory complaint synopsis"
+    requires: [complainant, accused, cheques, dishonours, forum]
+    feature_flag: synopsis_mandatory
+    conditional_note: >
+      ⚑ Per Sanjabij Tari v. Kishore S. Borcar, 2025 INSC 1158 — confirm local
+      trial-court implementation before defaulting this ON (LLD S.8 #6).
+
+  - key: list_of_docs
+    template: annexures.docx
+    title: "Annexure index / list of documents"
+    requires: [cheques, dishonours, notice]
+
+  - key: vakalatnama
+    template: vakalatnama.docx
+    title: "Vakalatnama"
+    requires: [complainant, advocate, forum]
+
+  - key: bsa63_certificate
+    template: bsa63.docx
+    title: "S.63 BSA certificate for electronic evidence"
+    requires: [notice]
+    conditional_note: >
+      Only applicable when the notice (or another relied-upon exhibit) was
+      served or exists in electronic form (email/WhatsApp). See
+      app.drafting.render.docx_renderer.is_document_applicable().
+
+# Opened in Phase 2 (research group + saved paragraphs), declared here so
+# the track config is complete end to end even though the UI for this
+# doesn't exist yet.
+research_slots:
+  - key: presumption_118_139
+    label: "Presumption under S.118/S.139 and what rebuts it"
+  - key: legally_enforceable_debt
+    label: "Legally enforceable debt — cash-loan and S.269SS objections"
+  - key: territorial_jurisdiction_142_2
+    label: "Territorial jurisdiction under S.142(2)"
+  - key: director_partner_liability
+    label: "Director/partner liability for a corporate accused (S.141)"
+  - key: likely_defences
+    label: "Likely defences and how courts have treated them"

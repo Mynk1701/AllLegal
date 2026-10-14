@@ -10,3 +10,14 @@ cryptography>=41.0.0   # required by PyJWT to verify Supabase's ES256 JWTs (app/
 supabase==2.0.3
 boto3>=1.36,<2.0   # >=1.36 needed for botocore's request_checksum_calculation Config option (GCS compat)
 razorpay==1.4.2
+
+# Drafting module (app/drafting/) — LLD: plans/read-alllegal-drafting-module-track-spec-keen-ladybug.md
+PyYAML==6.0.1       # track.yaml config loading (app/drafting/registry.py)
+docxtpl==0.20.2     # Jinja-tagged .docx template rendering (app/drafting/render/docx_renderer.py)
+python-docx==1.1.2  # underlying .docx read/write; also used to BUILD the templates (scripts/build_drafting_templates.py)
+
+anthropic==0.94.0   # scripts/test_citation_relationship.py — citation-treatment classification feasibility test.
+                    # Already present in the shared `legal-helper` conda env as a dependency of the sibling
+                    # pipeline project (its own requirements.txt pins >=0.28,<0.29; the env has drifted ahead
+                    # to this version in practice) — listed here too so this repo's own requirements are honest
+                    # about what it needs, not because a fresh install was required to write this script.

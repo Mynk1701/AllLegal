@@ -403,5 +403,136 @@ class SupabaseService:
             return False
 
 
+    # ==================== Drafting module — matters ====================
+    # Same ownership posture as groups/annotations above: the service-role
+    # client bypasses RLS, so every method here is scoped by user_id, and
+    # routes verify ownership before touching a matter's children.
+
+    def create_matter(self, user_id: str, track_key: str, title: str) -> Optional[Dict]:
+        try:
+            resp = self.admin.table("matters").insert(
+                {"user_id": user_id, "track_key": track_key, "title": title, "facts": {}}
+            ).execute()
+            return resp.data[0] if resp.data else None
+        except Exception as e:
+            logger.error(f"❌ create_matter failed: {str(e)}")
+            return None
+
+    def list_matters(self, user_id: str, track_key: Optional[str] = None) -> List[Dict]:
+        try:
+            query = self.admin.table("matters").select("*").eq("user_id", user_id)
+            if track_key:
+                query = query.eq("track_key", track_key)
+            resp = query.order("updated_at", desc=True).execute()
+            return resp.data or []
+        except Exception as e:
+            logger.error(f"❌ list_matters failed: {str(e)}")
+            return []
+
+    def get_matter(self, user_id: str, matter_id: str) -> Optional[Dict]:
+        """Fetch a matter only if owned by user_id (ownership gate)."""
+        try:
+            resp = (
+                self.admin.table("matters").select("*")
+                .eq("id", matter_id).eq("user_id", user_id).execute()
+            )
+            return resp.data[0] if resp.data else None
+        except Exception as e:
+            logger.error(f"❌ get_matter failed: {str(e)}")
+            return None
+
+    def update_matter_facts(self, user_id: str, matter_id: str, facts: Dict[str, Any]) -> Optional[Dict]:
+        """Replaces the matter's `facts` JSON wholesale. Callers merge the
+        patched section into the existing facts dict first (see
+        app/api/routes/drafting.py patch_facts) — this method itself does
+        no merging, matching update_group's plain-replace pattern."""
+        try:
+            resp = (
+                self.admin.table("matters")
+                .update({"facts": facts, "updated_at": datetime.now(timezone.utc).isoformat()})
+                .eq("id", matter_id).eq("user_id", user_id).execute()
+            )
+            return resp.data[0] if resp.data else None
+        except Exception as e:
+            logger.error(f"❌ update_matter_facts failed: {str(e)}")
+            return None
+
+    def update_matter_status(self, user_id: str, matter_id: str, status: str) -> Optional[Dict]:
+        try:
+            resp = (
+                self.admin.table("matters")
+                .update({"status": status, "updated_at": datetime.now(timezone.utc).isoformat()})
+                .eq("id", matter_id).eq("user_id", user_id).execute()
+            )
+            return resp.data[0] if resp.data else None
+        except Exception as e:
+            logger.error(f"❌ update_matter_status failed: {str(e)}")
+            return None
+
+    def delete_matter(self, user_id: str, matter_id: str) -> bool:
+        """Delete a matter; matter_documents rows cascade via FK."""
+        try:
+            resp = (
+                self.admin.table("matters").delete()
+                .eq("id", matter_id).eq("user_id", user_id).execute()
+            )
+            return bool(resp.data)
+        except Exception as e:
+            logger.error(f"❌ delete_matter failed: {str(e)}")
+            return False
+
+    def record_matter_document(
+        self,
+        user_id: str,
+        matter_id: str,
+        template_key: str,
+        template_version: str,
+        facts_hash: str,
+        gaps: List[str],
+    ) -> Optional[Dict]:
+        """Audit-trail row for one generation — never the file itself (LLD
+        S.4: 'No stored client documents in Phase 1')."""
+        try:
+            resp = self.admin.table("matter_documents").insert({
+                "matter_id": matter_id,
+                "user_id": user_id,
+                "template_key": template_key,
+                "template_version": template_version,
+                "facts_hash": facts_hash,
+                "gaps": gaps,
+            }).execute()
+            return resp.data[0] if resp.data else None
+        except Exception as e:
+            logger.error(f"❌ record_matter_document failed: {str(e)}")
+            return None
+
+    def list_matter_documents(self, matter_id: str) -> List[Dict]:
+        try:
+            resp = (
+                self.admin.table("matter_documents").select("*")
+                .eq("matter_id", matter_id).order("created_at", desc=True).execute()
+            )
+            return resp.data or []
+        except Exception as e:
+            logger.error(f"❌ list_matter_documents failed: {str(e)}")
+            return []
+
+    def finalise_matter_document(self, user_id: str, matter_id: str, document_id: str) -> Optional[Dict]:
+        """Records the lawyer's attestation that they reviewed and adopt
+        this draft (LLD S.7 'finalising... records the lawyer's
+        attestation'). Scoped by matter_id + user_id, not just the row id."""
+        try:
+            resp = (
+                self.admin.table("matter_documents")
+                .update({"finalised_at": datetime.now(timezone.utc).isoformat()})
+                .eq("id", document_id).eq("matter_id", matter_id).eq("user_id", user_id)
+                .execute()
+            )
+            return resp.data[0] if resp.data else None
+        except Exception as e:
+            logger.error(f"❌ finalise_matter_document failed: {str(e)}")
+            return None
+
+
 # Global Supabase service instance
 supabase_service = SupabaseService()

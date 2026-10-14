@@ -9,7 +9,7 @@ import json
 
 from pydantic import BaseModel, Field, field_validator
 from typing import Any, Dict, List, Optional
-from datetime import datetime
+from datetime import date, datetime
 
 
 def _normalize_verdict(v: Any) -> List[str]:
@@ -221,6 +221,122 @@ class Annotation(BaseModel):
     comment: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+# ==================== Drafting module (Phase 1 — cheque bounce) ====================
+# LLD: plans/read-alllegal-drafting-module-track-spec-keen-ladybug.md, S.9.
+# `facts` travels as a raw dict both ways: the frontend builds it from the
+# track config's field definitions, and app/api/routes/drafting.py validates
+# it against the track's actual Pydantic fact model (e.g. ChequeBounceFacts)
+# before it ever reaches the deadline engine or the renderer. Keeping it
+# loosely typed here (rather than importing ChequeBounceFacts into the
+# public API schema) is what lets a second track plug in later without a
+# new response model.
+
+class StageOut(BaseModel):
+    key: str
+    label: str
+    sections: List[str] = Field(default_factory=list)
+
+
+class DocumentConfigOut(BaseModel):
+    key: str
+    title: str
+    requires: List[str] = Field(default_factory=list)
+    feature_flag: Optional[str] = None
+    conditional_note: Optional[str] = None
+
+
+class ResearchSlotOut(BaseModel):
+    key: str
+    label: str
+
+
+class TrackSummary(BaseModel):
+    key: str
+    title: str
+
+
+class TrackDetail(TrackSummary):
+    stages: List[StageOut] = Field(default_factory=list)
+    deadlines: List[str] = Field(default_factory=list)
+    documents: List[DocumentConfigOut] = Field(default_factory=list)
+    research_slots: List[ResearchSlotOut] = Field(default_factory=list)
+
+
+class MatterCreate(BaseModel):
+    track_key: str = Field(..., min_length=1)
+    title: str = Field(..., min_length=1, max_length=300)
+
+
+class Matter(BaseModel):
+    id: str
+    track_key: str
+    title: str
+    status: str = "draft"
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class MatterDetail(Matter):
+    facts: Dict[str, Any] = Field(default_factory=dict)
+
+
+class FactsPatch(BaseModel):
+    """Merges `data` into one section of the matter's facts (PATCH
+    semantics — a section at a time, so autosave never has to resend the
+    whole matter). Most sections (complainant, accused, notice, ...) are
+    objects and get a shallow dict-merge; three sections (cheques,
+    presentments, dishonours) are LISTS on ChequeBounceFacts and are
+    replaced wholesale when `data` is a list — see
+    app/api/routes/drafting.py patch_facts()."""
+    section: str = Field(..., min_length=1, description="Top-level facts key, e.g. 'complainant'")
+    data: Any = Field(default_factory=dict, description="A dict to merge, or a list to replace a list-typed section")
+
+
+class DeadlineOut(BaseModel):
+    key: str
+    label: str
+    status: str
+    safe_by: Optional[date] = None
+    outer_limit: Optional[date] = None
+    condonable: Optional[bool] = None
+    basis: str = ""
+    authority: str = ""
+    warnings: List[str] = Field(default_factory=list)
+
+
+class ValidationIssueOut(BaseModel):
+    rule: str
+    severity: str
+    message: str
+    field_path: Optional[str] = None
+    applies_to_documents: List[str] = Field(default_factory=list)
+
+
+class DocumentReadinessOut(BaseModel):
+    key: str
+    title: str
+    applicable: bool = True
+    missing_sections: List[str] = Field(default_factory=list)
+    blocking_issues: List[ValidationIssueOut] = Field(default_factory=list)
+
+
+class MatterStatusOut(BaseModel):
+    deadlines: List[DeadlineOut] = Field(default_factory=list)
+    validation_issues: List[ValidationIssueOut] = Field(default_factory=list)
+    documents: List[DocumentReadinessOut] = Field(default_factory=list)
+
+
+class MatterDocumentOut(BaseModel):
+    """One row of the generation audit trail (`matter_documents`) — NOT the
+    file itself, which is streamed as a .docx response body, never stored."""
+    id: str
+    template_key: str
+    template_version: str
+    gaps: List[str] = Field(default_factory=list)
+    finalised_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
 
 
 # ==================== Error Response ====================
